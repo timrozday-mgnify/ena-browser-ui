@@ -66,6 +66,10 @@ def test_the_test_flag_chooses_the_ena_environment(client, ena):
     "path,payload",
     [
         ("/api/records/modify", {"entity": "studies", "records": [{"accession": "PRJEB1", "changes": {"title": "x"}}]}),
+        (
+            "/api/records/modify/preview",
+            {"entity": "studies", "records": [{"accession": "PRJEB1", "changes": {"title": "x"}}]},
+        ),
         ("/api/records/action", {"accession": "PRJEB1", "action": "cancel"}),
     ],
 )
@@ -106,6 +110,8 @@ def test_modify_patches_the_fetched_xml_and_keeps_everything_else(client, ena, r
     # must survive the round trip instead of being dropped.
     assert project.findtext("DESCRIPTION") == "a description the Reports API never returns"
     assert project.findtext("NAME") == "a name"
+    # and the caller is told exactly what went out, not just that it worked
+    assert body["results"][0]["xml"].encode() == ena.submit.documents[0]
 
 
 def test_a_non_editable_field_is_refused_without_submitting(client, ena, record_xml, writable):
@@ -148,6 +154,42 @@ def test_files_cannot_be_modified(client, ena, record_xml, writable):
 
 def test_an_empty_change_set_is_rejected(client, ena, writable):
     assert post(client, "/api/records/modify", {"entity": "studies", "records": []}, **HEADERS).status_code == 400
+
+
+# --- the manifest preview ---------------------------------------------------
+
+
+def preview(client, changes, entity="studies", accession="PRJEB1"):
+    return post(
+        client,
+        "/api/records/modify/preview",
+        {"entity": entity, "records": [{"accession": accession, "changes": changes}]},
+        **HEADERS,
+    )
+
+
+def test_preview_returns_the_document_it_would_submit_and_sends_nothing(client, ena, record_xml, writable):
+    body = preview(client, {"title": "new title"}).json()
+    assert body["success"] is True
+    assert ena.submit.documents == []  # inspected, not submitted
+
+    manifest = body["results"][0]["xml"]
+    assert etree.fromstring(manifest.encode()).find(".//ACTIONS/ACTION/MODIFY") is not None
+    modify(client, {"title": "new title"})
+    assert ena.submit.documents[0] == manifest.encode()
+
+
+def test_preview_reports_a_manifest_it_cannot_build(client, ena, record_xml, writable):
+    body = preview(client, {"status": "PUBLIC"}).json()
+    assert body["success"] is False
+    assert "not editable" in body["results"][0]["messages"][0]
+    assert body["results"][0]["xml"] == ""
+    assert ena.submit.documents == []
+
+
+def test_an_empty_preview_is_rejected(client, ena, writable):
+    response = post(client, "/api/records/modify/preview", {"entity": "studies", "records": []}, **HEADERS)
+    assert response.status_code == 400
 
 
 # --- lifecycle actions ------------------------------------------------------

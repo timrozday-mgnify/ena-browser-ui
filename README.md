@@ -48,7 +48,9 @@ libraries so anything learned here transfers back.
 | **Entities** | Studies, samples, reads (runs) and experiments as first-class tabs; analyses and files come free from the element's entity defaults, read-only. |
 | **Browsing** | Per-column filters, multi-column sort, pin/hide/reorder/resize columns, include or exclude cancelled and suppressed records. All of this is the element's, not ours. |
 | **Read-only ⇄ read/write** | One explicit toggle. Read-only is the default and the server refuses writes outright unless `ENA_BROWSER_READONLY=false`, so a mis-click in the UI cannot reach ENA. |
-| **Modifications** | In write mode, edits to an allow-list of fields accumulate into a change set, previewed as a before/after diff and submitted as a MODIFY. Accessions and status are never editable — status changes go through lifecycle actions. |
+| **Modifications** | In write mode, edits to an allow-list of fields accumulate into a change set. Submitting is deliberately a two-step act: **generate the MODIFY manifests**, read the XML that would go to ENA in the panel under the grid, then submit. Accessions and status are never editable — status changes go through lifecycle actions. |
+| **Manifest inspection** | The *MODIFY manifests* panel holds one entry per record: the fields changed, and the full submission document built from the record as ENA currently holds it. Submit stays locked until manifests exist for the current edits, and any further edit re-locks it. |
+| **Submission log** | The *Submission log* panel keeps every MODIFY and lifecycle action this tab has sent: what ENA said (info, warnings, errors, verbatim), the document that was actually sent, and whether it matches the manifest that was reviewed. |
 | **Lifecycle actions** | Release, hold, suppress, cancel per row, via `ena-api-client`'s submission endpoints. Write-gated like every other write. |
 | **Undo/redo** | A host-side stack over the element's `getState()` / `setState()` — edits, filters, sort, layout and selection. `⌘Z` / `⇧⌘Z`. It undoes *staged* work; anything already submitted to ENA is outside the stack. |
 | **Layout persistence** | Column layout, filters, sort and the active entity survive a reload (`localStorage`). Rows never persist — they are re-fetched, so a stale status can't be shown. |
@@ -127,6 +129,17 @@ So an edit is applied like this, in `ena_submission_toolkit.records.modify_recor
    or a direct child element, nothing more clever.
 3. The patched record is wrapped in a `WEBIN`/`MODIFY` submission and posted.
 
+Steps 1–3 are also reachable without step 3's post: `preview_modify_records()`
+builds the same documents and returns them, which is what
+`POST /api/records/modify/preview` and the manifests panel use. The submission
+that follows runs the identical builder, and its results carry the document it
+sent — so the log can say whether what went to ENA is byte-for-byte what was
+reviewed, rather than asking anyone to take that on trust.
+
+A MODIFY replaces a record. Making it a button next to an edited cell would
+make it feel like saving a spreadsheet, which it is not: nothing is sent until
+the manifests have been generated, and any edit after that invalidates them.
+
 If step 1 fails, the record is reported as failed and **nothing is submitted**.
 A partial document is worse than no submission.
 
@@ -146,7 +159,7 @@ anything else built on this stack:
 | Transport | [`ena-api-client`](https://github.com/timrozday-mgnify/ena-api-client) | `client.submit` (Submission API), `client.reports` (Reports API), `client.browser.xml()` (a record's current XML) |
 | Behaviour | [`ena-submission-toolkit`](https://github.com/timrozday-mgnify/ena-submission-toolkit) | `records.list_records` / `modify_records` / `record_action` / `editable_columns` / `validate_credentials`, plus `Credentials` and the `webin_client` context manager |
 | View | [`ena-browser`](https://github.com/timrozday-mgnify/ena-browser) | the `<ena-browser>` grid element — rows in, events out, never an ENA request |
-| This app | — | HTTP endpoints, the server-side write lock, the action allow-list (no `kill`), and the page |
+| This app | — | HTTP endpoints, the server-side write lock, the action allow-list (no `kill`), the manifest gate in the page, and the page itself |
 
 `server/` therefore holds no ENA logic at all: `views_records.py` parses a
 request, checks the lock, calls `records.*`, and maps the exception types onto

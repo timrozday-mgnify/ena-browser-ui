@@ -92,6 +92,35 @@ def records_list(request: HttpRequest, entity: str) -> JsonResponse | HttpRespon
     return _run(call)
 
 
+def _modify_batch(request: HttpRequest) -> tuple[str, list[Any]]:
+    payload = _body(request)
+    batch = payload.get("records")
+    if not isinstance(batch, list) or not batch:
+        raise ValueError("No records to modify")
+    return str(payload.get("entity") or ""), batch
+
+
+def records_modify_preview(request: HttpRequest) -> JsonResponse | HttpResponseNotAllowed:
+    """Build the MODIFY manifests for a change set. Submits nothing.
+
+    Write-gated like the submission itself: a read-only server has no editable
+    grid to build a change set from, and gating both keeps "can this app write"
+    a single answer. What it returns is the exact document ``records_modify``
+    would send, so the page can show it before anything is committed.
+    """
+    if request.method != "POST":
+        return HttpResponseNotAllowed(["POST"])
+    creds, test, error = _guard(request, write=True)
+    if error is not None:
+        return error
+
+    def call() -> dict[str, Any]:
+        entity, batch = _modify_batch(request)
+        return records.preview_modify_records(creds, entity, batch, test=test, submission_alias=MODIFY_ALIAS)
+
+    return _run(call)
+
+
 def records_modify(request: HttpRequest) -> JsonResponse | HttpResponseNotAllowed:
     if request.method != "POST":
         return HttpResponseNotAllowed(["POST"])
@@ -100,13 +129,8 @@ def records_modify(request: HttpRequest) -> JsonResponse | HttpResponseNotAllowe
         return error
 
     def call() -> dict[str, Any]:
-        payload = _body(request)
-        batch = payload.get("records")
-        if not isinstance(batch, list) or not batch:
-            raise ValueError("No records to modify")
-        return records.modify_records(
-            creds, str(payload.get("entity") or ""), batch, test=test, submission_alias=MODIFY_ALIAS
-        )
+        entity, batch = _modify_batch(request)
+        return records.modify_records(creds, entity, batch, test=test, submission_alias=MODIFY_ALIAS)
 
     return _run(call)
 

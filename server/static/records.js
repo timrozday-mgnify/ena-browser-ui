@@ -22,6 +22,7 @@ function editableFor(entity) { return EDITABLE[entity] || []; }
 function canEdit() { return WRITE && editableFor(ENTITY).length > 0; }
 
 function applyMode() {
+  if (!canEdit()) clearManifests();
   grid.applyConfig({
     mode: canEdit() ? "edit" : "read",
     editableColumns: editableFor(ENTITY),
@@ -33,9 +34,153 @@ function applyMode() {
   }
 }
 
-function refreshSubmitButton() {
-  $("submit").disabled = !canEdit() || grid.getChangeSet().rows.length === 0;
+// --- The manifest gate ------------------------------------------------------
+// Submitting a MODIFY replaces the whole record in ENA, so it is not a button
+// press: the exact documents have to be built and shown first. MANIFESTS holds
+// the last preview, MANIFEST_KEY the change set it was built from — edit
+// anything and the key no longer matches, which re-locks the submit button.
+let MANIFESTS = null;
+let MANIFEST_KEY = "";
+
+const changeKey = (entries) => JSON.stringify(entries);
+
+function manifestsReady(entries) {
+  return (
+    entries.length > 0 &&
+    MANIFESTS !== null &&
+    MANIFEST_KEY === changeKey(entries) &&
+    MANIFESTS.length === entries.length &&
+    MANIFESTS.every((manifest) => manifest.success)
+  );
 }
+
+function refreshSubmitButton() {
+  const entries = canEdit() ? pendingChanges() : [];
+  $("generate").disabled = entries.length === 0;
+  $("submit").disabled = !manifestsReady(entries);
+  renderManifestState(entries);
+}
+
+function renderManifestState(entries) {
+  const state = $("manifestState");
+  const stale = MANIFESTS !== null && MANIFEST_KEY !== changeKey(entries);
+  const failed = (MANIFESTS || []).filter((manifest) => !manifest.success).length;
+  let className = "muted";
+  let text;
+  if (!entries.length) {
+    text = MANIFESTS ? "no staged changes left" : "no staged changes";
+  } else if (MANIFESTS === null || stale) {
+    className = "warn";
+    text = `${entries.length} record(s) staged — no manifests for these edits yet`;
+  } else if (failed) {
+    className = "bad";
+    text = `${failed} of ${MANIFESTS.length} manifest(s) could not be built — nothing will be submitted`;
+  } else {
+    className = "ok";
+    text = `${MANIFESTS.length} manifest(s) built and ready to review`;
+  }
+  state.className = "state " + className;
+  state.textContent = text;
+}
+
+function clearManifests() {
+  MANIFESTS = null;
+  MANIFEST_KEY = "";
+  $("manifests").innerHTML = "";
+  $("manifestEmpty").hidden = false;
+}
+
+function fieldList(entry) {
+  return Object.entries(entry.changes || {})
+    .map(([field, value]) => `<li><code>${esc(field)}</code>: ` +
+      `<span class="muted">${esc(entry.before?.[field] ?? "")}</span> → ${esc(value)}</li>`)
+    .join("");
+}
+
+function renderManifests(entries) {
+  const byAccession = new Map(entries.map((entry) => [entry.accession, entry]));
+  $("manifestEmpty").hidden = MANIFESTS.length > 0;
+  $("manifests").innerHTML = MANIFESTS.map((manifest) => {
+    const entry = byAccession.get(manifest.accession) || {};
+    const changes = { ...entry, changes: manifest.changes || entry.changes };
+    const body = manifest.success
+      ? `<pre>${esc(manifest.xml)}</pre>`
+      : `<p class="msg bad">${esc((manifest.messages || []).join("; ") || "could not be built")}</p>` +
+        `<p class="muted">This record will not be submitted, and neither will any other ` +
+        `until every manifest builds.</p>`;
+    return `<details class="entry ${manifest.success ? "ok" : "bad"}"${MANIFESTS.length === 1 ? " open" : ""}>` +
+      `<summary>${esc(manifest.accession)} — ${manifest.success ? "manifest built" : "could not be built"}</summary>` +
+      `<div class="body"><ul class="fields">${fieldList(changes)}</ul>${body}</div></details>`;
+  }).join("");
+}
+
+$("generate").onclick = async () => {
+  const entries = pendingChanges();
+  if (!entries.length) { refreshSubmitButton(); return; }
+  $("generate").disabled = true;
+  try {
+    const body = await api("/api/records/modify/preview", {
+      method: "POST",
+      body: JSON.stringify({ entity: ENTITY, records: entries.map(({ accession, changes }) => ({ accession, changes })) }),
+    });
+    MANIFESTS = body.results || [];
+    MANIFEST_KEY = changeKey(entries);
+    renderManifests(entries);
+    reflectWriteMode();
+  } catch (error) {
+    clearManifests();
+    banner("bad", `Could not build the manifests; nothing was submitted: ${error.message}`);
+  }
+  refreshSubmitButton();
+};
+
+// --- The submission log -----------------------------------------------------
+// Verbose on purpose: what was sent, what ENA said, and whether the document
+// that went out is the one that was reviewed.
+function logEntry({ title, ok, lines = [], html = "" }) {
+  $("logEmpty").hidden = true;
+  const stamp = new Date().toLocaleTimeString();
+  const element = document.createElement("details");
+  element.className = "entry " + (ok ? "ok" : "bad");
+  element.open = true;
+  element.innerHTML =
+    `<summary>${stamp} · ${esc(title)}</summary><div class="body">` +
+    lines.map(([kind, text]) => `<p class="msg ${kind}">${esc(text)}</p>`).join("") +
+    html + "</div>";
+  $("log").prepend(element);
+  while ($("log").children.length > 20) $("log").lastElementChild.remove();
+}
+
+function logSubmission(entries, results) {
+  const reviewed = new Map((MANIFESTS || []).map((manifest) => [manifest.accession, manifest.xml]));
+  for (const result of results) {
+    const entry = entries.find((candidate) => candidate.accession === result.accession) || {};
+    const lines = [];
+    for (const message of result.info || []) lines.push(["", message]);
+    for (const message of result.warnings || []) lines.push(["warn", message]);
+    for (const message of result.errors || []) lines.push(["bad", message]);
+    if (!lines.length) for (const message of result.messages || []) lines.push([result.success ? "" : "bad", message]);
+    if (!lines.length) lines.push(["", result.success ? "ENA returned no messages." : "ENA rejected it without saying why."]);
+
+    const sent = result.xml || "";
+    const same = sent && reviewed.get(result.accession) === sent;
+    lines.unshift([same ? "" : "warn",
+      same ? "Document sent is byte-for-byte the manifest reviewed above."
+           : "The document sent differs from the manifest that was reviewed."]);
+    logEntry({
+      title: `${result.accession} · MODIFY ${envLabel()} · ${result.success ? "accepted" : "REJECTED"}`,
+      ok: result.success,
+      lines,
+      html: `<ul class="fields">${fieldList({ ...entry, changes: result.changes || entry.changes })}</ul>` +
+        (sent ? `<pre>${esc(sent)}</pre>` : ""),
+    });
+  }
+}
+
+$("logClear").onclick = () => {
+  $("log").innerHTML = "";
+  $("logEmpty").hidden = false;
+};
 
 // --- Loading ----------------------------------------------------------------
 async function loadEntity() {
@@ -51,6 +196,7 @@ async function loadEntity() {
     const body = await api(`/api/records/${ENTITY}`);
     applySavedLayout(ENTITY);
     grid.setRows(body.rows || []);
+    clearManifests();
     applyMode();
     resetUndo();
     $("rowCount").textContent = `${(body.rows || []).length} records from ${envLabel()}`;
@@ -84,8 +230,8 @@ function showDiff(entries) {
     (TEST ? "" : " This is the production service.");
   const rows = entries.flatMap((entry) =>
     Object.entries(entry.changes).map(
-      ([field, value]) => `<tr><td>${entry.accession}</td><td>${field}</td>` +
-        `<td class="muted">${entry.before?.[field] ?? ""}</td><td>${value ?? ""}</td></tr>`,
+      ([field, value]) => `<tr><td>${esc(entry.accession)}</td><td>${esc(field)}</td>` +
+        `<td class="muted">${esc(entry.before?.[field] ?? "")}</td><td>${esc(value)}</td></tr>`,
     ),
   );
   $("diffTable").innerHTML =
@@ -101,31 +247,36 @@ function showDiff(entries) {
 
 $("submit").onclick = async () => {
   const entries = pendingChanges();
-  if (!entries.length) { refreshSubmitButton(); return; }
+  if (!manifestsReady(entries)) { refreshSubmitButton(); return; }
   if (!(await showDiff(entries))) return;
 
   $("submit").disabled = true;
+  const payload = entries.map(({ accession, changes }) => ({ accession, changes }));
   try {
     const body = await api("/api/records/modify", {
       method: "POST",
-      body: JSON.stringify({
-        entity: ENTITY,
-        records: entries.map(({ accession, changes }) => ({ accession, changes })),
-      }),
+      body: JSON.stringify({ entity: ENTITY, records: payload }),
     });
-    const failed = (body.results || []).filter((r) => !r.success);
+    const results = body.results || [];
+    logSubmission(entries, results);
+    const failed = results.filter((result) => !result.success);
     if (body.success) {
       // ENA now holds the new values; drop the local ones and re-fetch rather
       // than trusting the optimistic copy.
       grid.clearChanges();
-      banner("ok", `Submitted ${body.results.length} change(s) to ${envLabel()}.`);
+      banner("ok", `Submitted ${results.length} change(s) to ${envLabel()}. See the submission log below.`);
       await loadEntity();
     } else {
       // Deliberately keep the change set so the user can fix and retry.
-      banner("bad", "ENA rejected some changes; your edits are kept.\n" +
-        failed.map((r) => `${r.accession}: ${r.messages.join("; ")}`).join("\n"));
+      banner("bad", `ENA rejected ${failed.length} of ${results.length} record(s); your edits are kept. ` +
+        "The submission log below has what it said.");
     }
   } catch (error) {
+    logEntry({
+      title: `MODIFY ${envLabel()} · failed before ENA answered`,
+      ok: false,
+      lines: [["bad", error.message], ["", `${payload.length} record(s) were in the batch; your edits are kept.`]],
+    });
     banner("bad", `Submission failed; your edits are kept: ${error.message}`);
   }
   refreshSubmitButton();
@@ -148,6 +299,11 @@ grid.addEventListener("ena-browser:row-action", async (event) => {
   try {
     const body = await api("/api/records/action", { method: "POST", body: JSON.stringify(payload) });
     const detail = (body.messages || []).join("; ");
+    logEntry({
+      title: `${accession} · ${action.toUpperCase()} ${envLabel()} · ${body.success ? "accepted" : "REJECTED"}`,
+      ok: body.success,
+      lines: (body.messages || []).map((message) => [body.success ? "" : "bad", message]),
+    });
     if (body.success) {
       banner("ok", `${action} ${accession}: done. ${detail}`);
       await loadEntity();   // the status column is how the user sees it worked
@@ -155,6 +311,8 @@ grid.addEventListener("ena-browser:row-action", async (event) => {
       banner("bad", `${action} ${accession} failed: ${detail || "ENA rejected it"}`);
     }
   } catch (error) {
+    logEntry({ title: `${accession} · ${action.toUpperCase()} ${envLabel()} · failed`, ok: false,
+               lines: [["bad", error.message]] });
     banner("bad", `${action} ${accession} failed: ${error.message}`);
   }
 });

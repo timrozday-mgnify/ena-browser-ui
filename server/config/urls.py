@@ -8,6 +8,7 @@ urlpatterns = [
     path("", views_core.index),
     path("api/health", views_core.health),
     path("api/credentials/validate", views_records.credentials_validate),
+    path("api/records/modify/preview", views_records.records_modify_preview),
     path("api/records/modify", views_records.records_modify),
     path("api/records/action", views_records.records_action),
     path("api/records/<str:entity>", views_records.records_list),

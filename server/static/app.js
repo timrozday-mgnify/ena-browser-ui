@@ -50,6 +50,12 @@ function clearBanner() { $("banner").className = "banner"; }
 
 function envLabel() { return TEST ? "TEST" : "PRODUCTION"; }
 
+// Record text comes from ENA, and manifests are XML — neither is safe to
+// drop into innerHTML raw.
+function esc(value) {
+  return String(value ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+}
+
 function reflectEnv() {
   const pill = $("envPill");
   pill.textContent = envLabel();
