@@ -1,0 +1,77 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pre-commit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      # The pytest hook is pre-push only, so this is the lint pass; the
+      # `test` job below is what actually runs the suite.
+      - uses: pre-commit/action@v3.0.1
+
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      # The element is a build artefact from a sibling repo's release, not a
+      # source dependency. Until it has a tag this download 404s and the
+      # Playwright tests skip themselves — which must not fail the build.
+      - name: Vendor the ena-browser bundle
+        id: vendor
+        continue-on-error: true
+        run: |
+          ref=$(grep -E '^\s+ENA_BROWSER_REF:' Taskfile.yml | awk '{print $2}')
+          mkdir -p server/static/vendor/ena-browser
+          base="https://github.com/timrozday-mgnify/ena-browser/releases/download/${ref}"
+          for asset in ena-browser.iife.js ena-browser.css; do
+            curl -fsSL -o "server/static/vendor/ena-browser/${asset}" "${base}/${asset}"
+          done
+
+      - name: Report whether the UI tests can run
+        run: |
+          if [ "${{ steps.vendor.outcome }}" = "success" ]; then
+            echo "::notice::ena-browser bundle vendored — the Playwright UI tests will run."
+          else
+            echo "::warning::ena-browser bundle unavailable — the Playwright UI tests will skip."
+          fi
+
+      - name: Install Chromium
+        if: steps.vendor.outcome == 'success'
+        run: playwright install --with-deps chromium
+
+      - name: Test
+        run: pytest -q
+
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: test-results-py${{ matrix.python-version }}
+          path: test-results/
+          retention-days: 7

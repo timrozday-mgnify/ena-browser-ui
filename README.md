@@ -19,10 +19,13 @@ browser                                  this app (Django)              ENA
 └──────────────────────────┘             └────────────────┘     └────────────────┘
 ```
 
-Status: **implemented.** Every phase of
-[IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) is built and tested (pytest +
-Playwright). The one deviation from the plan — how a MODIFY is built — is
-described in [How a change reaches ENA](#how-a-change-reaches-ena).
+Status: **implemented.** All nine phases of
+[IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) are built and tested (38 tests:
+pytest with ENA faked out, Playwright with the API stubbed); that file's
+**Progress** table maps each phase to the code. The one deviation worth knowing
+about — how a MODIFY is built — is
+[How a change reaches ENA](#how-a-change-reaches-ena). Not built, deliberately:
+no container image, and no MODIFY of run or experiment fields beyond `alias`.
 
 ---
 
@@ -162,4 +165,8 @@ tag, `task vendor:local` copies the build from a sibling `../ena-browser`
 checkout — for local work only, never a state to ship.
 
 `pre-commit` runs the lint hooks on commit and pytest on push; `task venv`
-installs both hooks.
+installs both hooks. CI runs the same two things on every pull request.
+
+[CONTRIBUTING.md](CONTRIBUTING.md) has the house rules — the ones about not
+reaching ENA from a test, not persisting credentials, and not letting a MODIFY
+lose data are the ones that matter.

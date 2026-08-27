@@ -1,11 +1,28 @@
 # Implementation plan
 
-**Status: all phases built and tested.** This document is kept as the record
-of what was intended and why. Two things landed differently from the plan; both
-are marked *Built differently* in place, and the first is the important one:
-MODIFY payloads are made by fetching and patching the record's current XML, not
-by rebuilding it with `ena-submission-toolkit`'s builders. See the README's
+**Status: all nine phases built and tested.** This document is kept as the
+record of what was intended and where the build diverged; the two divergences
+are marked *Built differently* in place. The important one is Phase 6: MODIFY
+payloads are made by fetching and patching the record's current XML, not by
+rebuilding it with `ena-submission-toolkit`'s builders — see the README's
 [How a change reaches ENA](README.md#how-a-change-reaches-ena).
+
+## Progress
+
+| Phase | Status | Where it lives |
+|---|---|---|
+| 1 — Skeleton that serves a page | done | `manage.py`, `server/config/`, `server/views_core.py`, `server/static/index.html`, `theme.js` |
+| 2 — Credentials | done | `server/webin_creds.py`, `static/creds.js`, `static/app.js` (`api()`) |
+| 3 — Read-only browsing | done | `ena_service.list_records`, `views_records.records_list`, `static/records.js` |
+| 4 — Persisted layout | done | `static/state.js` |
+| 5 — Read/write toggle | done | `config/settings.py` (`READONLY`), `views_records._guard`, `static/app.js` |
+| 6 — Editing and MODIFY | done, **differently** | `ena_service.modify_records` + `_EDITABLE`, the diff dialog in `static/records.js` |
+| 7 — Lifecycle actions | done | `ena_service.record_action`, the `row-action` handler in `static/records.js` |
+| 8 — Undo/redo | done | `static/undo.js` |
+| 9 — Tests and packaging | done, **differently** | `tests/` (38 tests), `Taskfile.yml`, `.github/workflows/ci.yml` |
+
+Not built, and deliberately: no `Dockerfile`, no `docker-compose.yml` (Phase 9),
+and no MODIFY of run or experiment fields beyond `alias` (Phase 6).
 
 Phased build of `ena-browser-ui`. Each phase ends in a working app and is
 independently revertable; each has a **Check** that is the definition of done.
