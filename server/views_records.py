@@ -1,0 +1,121 @@
+"""The API the page talks to: list, modify, act, validate credentials.
+
+Thin by design — parse, enforce the write lock, delegate to ``ena_service``,
+turn exceptions into a JSON ``detail`` the UI can show verbatim.
+"""
+
+from __future__ import annotations
+
+import json
+from collections.abc import Callable
+from typing import Any
+
+import ena_service
+import webin_creds
+from django.conf import settings
+from django.http import HttpRequest, HttpResponseNotAllowed, JsonResponse
+
+
+def _body(request: HttpRequest) -> dict[str, Any]:
+    try:
+        payload = json.loads(request.body or b"{}")
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"Invalid JSON body: {exc}") from None
+    if not isinstance(payload, dict):
+        raise ValueError("Expected a JSON object")
+    return payload
+
+
+def _guard(request: HttpRequest, *, write: bool = False) -> tuple[Any, bool, JsonResponse | None]:
+    """Credentials + environment, plus the server-side write lock."""
+    if write and settings.READONLY:
+        return (
+            None,
+            False,
+            JsonResponse(
+                {"detail": "Server is in read-only mode (ENA_BROWSER_READONLY). No changes were sent to ENA."},
+                status=403,
+            ),
+        )
+    creds, error = webin_creds.from_request(request)
+    if error is not None:
+        return None, False, error
+    return creds, webin_creds.wants_test(request), None
+
+
+def _run(fn: Callable[[], dict[str, Any] | list[Any]]) -> JsonResponse:
+    """Call an ena_service function, mapping its failures onto status codes."""
+    try:
+        result = fn()
+    except PermissionError as exc:
+        return JsonResponse({"detail": str(exc)}, status=401)
+    except (ValueError, LookupError) as exc:
+        return JsonResponse({"detail": str(exc)}, status=400)
+    except Exception as exc:  # noqa: BLE001 - the UI shows this text; a 500 page would not
+        return JsonResponse({"detail": f"{type(exc).__name__}: {exc}"}, status=502)
+    return JsonResponse(result if isinstance(result, dict) else {"rows": result})
+
+
+def credentials_validate(request: HttpRequest) -> JsonResponse | HttpResponseNotAllowed:
+    if request.method != "POST":
+        return HttpResponseNotAllowed(["POST"])
+    creds, test, error = _guard(request)
+    if error is not None:
+        return error
+
+    def call() -> dict[str, Any]:
+        ena_service.validate_credentials(creds, test=test)
+        return {"valid": True, "test": test}
+
+    return _run(call)
+
+
+def records_list(request: HttpRequest, entity: str) -> JsonResponse | HttpResponseNotAllowed:
+    if request.method != "GET":
+        return HttpResponseNotAllowed(["GET"])
+    creds, test, error = _guard(request)
+    if error is not None:
+        return error
+
+    def call() -> dict[str, Any]:
+        rows = ena_service.list_records(creds, entity, test=test)
+        return {"rows": rows, "editable_columns": ena_service.editable_columns(entity)}
+
+    return _run(call)
+
+
+def records_modify(request: HttpRequest) -> JsonResponse | HttpResponseNotAllowed:
+    if request.method != "POST":
+        return HttpResponseNotAllowed(["POST"])
+    creds, test, error = _guard(request, write=True)
+    if error is not None:
+        return error
+
+    def call() -> dict[str, Any]:
+        payload = _body(request)
+        records = payload.get("records")
+        if not isinstance(records, list) or not records:
+            raise ValueError("No records to modify")
+        return ena_service.modify_records(creds, str(payload.get("entity") or ""), records, test=test)
+
+    return _run(call)
+
+
+def records_action(request: HttpRequest) -> JsonResponse | HttpResponseNotAllowed:
+    if request.method != "POST":
+        return HttpResponseNotAllowed(["POST"])
+    creds, test, error = _guard(request, write=True)
+    if error is not None:
+        return error
+
+    def call() -> dict[str, Any]:
+        payload = _body(request)
+        return ena_service.record_action(
+            creds,
+            str(payload.get("accession") or ""),
+            str(payload.get("action") or ""),
+            test=test,
+            hold_until_date=payload.get("hold_until_date"),
+        )
+
+    return _run(call)

@@ -5,6 +5,9 @@ vars:
   # downloads into server/static/vendor/ena-browser/.
   ENA_BROWSER_REF: v0.1.0
   PORT: '{{.ENA_BROWSER_PORT | default "9200"}}'
+  # Loopback by default: the app has no authentication of its own, and the
+  # Webin credentials of whoever is using it pass through it.
+  HOST: '{{.ENA_BROWSER_HOST | default "127.0.0.1"}}'
 
 env:
   PYTHONPATH: server
@@ -34,17 +37,25 @@ tasks:
           curl -fsSL -o server/static/vendor/ena-browser/{{.ITEM}}
           https://github.com/timrozday-mgnify/ena-browser/releases/download/{{.ENA_BROWSER_REF}}/{{.ITEM}}
 
+  vendor:local:
+    desc: >
+      Copy the bundle from a local ../ena-browser checkout's dist/ instead of a
+      release. For working against an untagged element — do not ship this state.
+    cmds:
+      - mkdir -p server/static/vendor/ena-browser
+      - cp ../ena-browser/dist/ena-browser.iife.js ../ena-browser/dist/ena-browser.css server/static/vendor/ena-browser/
+
   dev:
     desc: Run locally with Django's autoreloading dev server
     deps: [venv]
     cmds:
-      - .venv/bin/python manage.py runserver 127.0.0.1:{{.PORT}} {{.CLI_ARGS}}
+      - .venv/bin/python manage.py runserver {{.HOST}}:{{.PORT}} {{.CLI_ARGS}}
 
   serve:
     desc: Run as a server with gunicorn (no autoreload)
     deps: [venv]
     cmds:
-      - .venv/bin/gunicorn config.wsgi:application --bind 0.0.0.0:{{.PORT}} --workers 2 --timeout 120 {{.CLI_ARGS}}
+      - .venv/bin/gunicorn config.wsgi:application --bind {{.HOST}}:{{.PORT}} --workers 2 --timeout 120 {{.CLI_ARGS}}
 
   test:
     desc: Run the pytest suite

@@ -1,5 +1,12 @@
 # Implementation plan
 
+**Status: all phases built and tested.** This document is kept as the record
+of what was intended and why. Two things landed differently from the plan; both
+are marked *Built differently* in place, and the first is the important one:
+MODIFY payloads are made by fetching and patching the record's current XML, not
+by rebuilding it with `ena-submission-toolkit`'s builders. See the README's
+[How a change reaches ENA](README.md#how-a-change-reaches-ena).
+
 Phased build of `ena-browser-ui`. Each phase ends in a working app and is
 independently revertable; each has a **Check** that is the definition of done.
 Read [README.md](README.md) (the stack decisions) and
@@ -142,12 +149,25 @@ changes the grid's editability and nothing else.
    rather than the optimistic local one. On failure: surface the receipt
    messages and **leave the change set intact** so the user can fix and retry.
 
-**Gap to decide before starting:** `ena-submission-toolkit` builds study and
-sample XML only. Runs and experiments have no MODIFY builder, so either
-(a) they stay read-only and the UI says so, or (b) a minimal
-`lxml`-built RUN/EXPERIMENT MODIFY document goes into `ena_service` and, if it
-proves out, moves up into the toolkit. Ship (a) in this phase; open (b) as its
-own piece of work with its own tests.
+**Built differently — and this replaces steps 3 and 4 above.** The gap this
+phase opened with ("the toolkit has no MODIFY builder for runs or experiments")
+turned out to be the smaller half of the problem. The larger half: a MODIFY
+replaces the whole object, and the Reports API returns only alias, accession,
+title and status — so *any* submission built from a report row deletes a
+study's description and a sample's attributes, studies and samples included.
+
+`ena_service.modify_records()` therefore fetches each record's current XML from
+the ENA Browser API with the user's Webin credentials, patches the edited
+fields into it, and submits that. A record whose XML cannot be fetched is
+reported as failed and never submitted. One generic path covers every entity,
+so the toolkit's builders are not used here at all — they build records from
+scratch, which is right for a new submission and wrong for editing one field of
+an existing one.
+
+What that costs: the editable set is per-entity and small (`_EDITABLE` in
+`ena_service.py`) — alias and title for studies, samples, experiments and
+analyses; alias only for runs; nothing for files. Widening it means adding a
+field-to-XML entry and a test, not new machinery.
 
 **Check:** edit an alias against ENA test, submit, confirm the receipt, confirm
 the re-fetch shows the new value; edit-then-revert-to-original submits nothing;
@@ -201,9 +221,12 @@ disables both buttons.
    the read/write toggle gating editability, an undo/redo round trip.
    Do **not** re-test the grid itself; filtering, sorting, pinning and selection
    are `ena-browser`'s suite.
-3. `task serve` hardening: gunicorn worker count and timeout, and a `Dockerfile`
-   + `docker-compose.yml` only if the app is ever deployed somewhere other than
-   a laptop. Not before.
+3. `task serve` hardening: gunicorn worker count and timeout. **Built
+   differently:** `task dev` and `task serve` both bind `127.0.0.1` (override
+   with `ENA_BROWSER_HOST`) — the app has no authentication of its own and
+   Webin credentials pass through it, so a default of `0.0.0.0` would be wrong.
+   No `Dockerfile` or `docker-compose.yml`: neither is needed to run this on a
+   laptop, which is the only place it runs today.
 
 **Check:** `task lint` and `task test` are clean; `pre-commit run --all-files`
 passes; the README's getting-started sequence works on a clean checkout.
