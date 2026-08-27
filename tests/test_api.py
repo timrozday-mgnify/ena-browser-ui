@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 
-import ena_service
 import pytest
 from conftest import HEADERS
 from lxml import etree
@@ -192,10 +191,7 @@ def test_unknown_actions_and_junk_accessions_are_refused(client, ena, writable, 
     assert ena.submit.calls == []
 
 
-# --- the service's own guards ----------------------------------------------
-
-
-def test_accessions_are_sanity_checked_before_they_reach_a_url():
-    creds = ena_service.Credentials("Webin-1", "secret")
-    with pytest.raises(ValueError):
-        ena_service._record_xml(creds, "../../etc/passwd", test=True)
+# NOTE: the ENA service itself (listing, MODIFY-by-XML-patch, lifecycle
+# actions, accession sanity checks) is tested in ena-submission-toolkit and
+# ena-api-client. What is left to test here is this app's HTTP layer: the
+# write lock, the action allow-list, and the error-to-status-code mapping.

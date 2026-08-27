@@ -1,7 +1,8 @@
 """The API the page talks to: list, modify, act, validate credentials.
 
-Thin by design — parse, enforce the write lock, delegate to ``ena_service``,
-turn exceptions into a JSON ``detail`` the UI can show verbatim.
+Thin by design — parse, enforce the write lock, delegate to
+``ena_submission_toolkit.records`` (the only thing in this stack that talks to
+ENA), turn exceptions into a JSON ``detail`` the UI can show verbatim.
 """
 
 from __future__ import annotations
@@ -10,10 +11,17 @@ import json
 from collections.abc import Callable
 from typing import Any
 
-import ena_service
 import webin_creds
 from django.conf import settings
 from django.http import HttpRequest, HttpResponseNotAllowed, JsonResponse
+from ena_submission_toolkit import records
+
+#: The lifecycle actions this app offers. ``records.ACTIONS`` also has ``kill``
+#: — irreversible and admin-only, deliberately not reachable from here.
+ALLOWED_ACTIONS = ("release", "hold", "suppress", "cancel")
+
+#: Names this app's MODIFY submissions, so they are identifiable in ENA.
+MODIFY_ALIAS = "ena-browser-ui-modify"
 
 
 def _body(request: HttpRequest) -> dict[str, Any]:
@@ -44,7 +52,7 @@ def _guard(request: HttpRequest, *, write: bool = False) -> tuple[Any, bool, Jso
 
 
 def _run(fn: Callable[[], dict[str, Any] | list[Any]]) -> JsonResponse:
-    """Call an ena_service function, mapping its failures onto status codes."""
+    """Call a records function, mapping its failures onto status codes."""
     try:
         result = fn()
     except PermissionError as exc:
@@ -64,7 +72,7 @@ def credentials_validate(request: HttpRequest) -> JsonResponse | HttpResponseNot
         return error
 
     def call() -> dict[str, Any]:
-        ena_service.validate_credentials(creds, test=test)
+        records.validate_credentials(creds, test=test)
         return {"valid": True, "test": test}
 
     return _run(call)
@@ -78,8 +86,8 @@ def records_list(request: HttpRequest, entity: str) -> JsonResponse | HttpRespon
         return error
 
     def call() -> dict[str, Any]:
-        rows = ena_service.list_records(creds, entity, test=test)
-        return {"rows": rows, "editable_columns": ena_service.editable_columns(entity)}
+        rows = records.list_records(creds, entity, test=test)
+        return {"rows": rows, "editable_columns": records.editable_columns(entity)}
 
     return _run(call)
 
@@ -93,10 +101,12 @@ def records_modify(request: HttpRequest) -> JsonResponse | HttpResponseNotAllowe
 
     def call() -> dict[str, Any]:
         payload = _body(request)
-        records = payload.get("records")
-        if not isinstance(records, list) or not records:
+        batch = payload.get("records")
+        if not isinstance(batch, list) or not batch:
             raise ValueError("No records to modify")
-        return ena_service.modify_records(creds, str(payload.get("entity") or ""), records, test=test)
+        return records.modify_records(
+            creds, str(payload.get("entity") or ""), batch, test=test, submission_alias=MODIFY_ALIAS
+        )
 
     return _run(call)
 
@@ -110,12 +120,15 @@ def records_action(request: HttpRequest) -> JsonResponse | HttpResponseNotAllowe
 
     def call() -> dict[str, Any]:
         payload = _body(request)
-        return ena_service.record_action(
+        action = str(payload.get("action") or "")
+        if action not in ALLOWED_ACTIONS:
+            raise ValueError(f"Unknown action {action!r}; expected one of {', '.join(ALLOWED_ACTIONS)}")
+        return records.record_action(
             creds,
             str(payload.get("accession") or ""),
-            str(payload.get("action") or ""),
+            action,
             test=test,
-            hold_until_date=payload.get("hold_until_date"),
+            hold_until=payload.get("hold_until_date"),
         )
 
     return _run(call)

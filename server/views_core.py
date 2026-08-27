@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import pathlib
 
-import ena_service
 from django.conf import settings
 from django.http import FileResponse, HttpRequest, JsonResponse
 from django.views.static import serve as static_serve
+from ena_submission_toolkit import records
 
 STATIC_DIR = pathlib.Path(__file__).resolve().parent / "static"
 VENDOR_DIR = STATIC_DIR / "vendor" / "ena-browser"
@@ -30,6 +30,6 @@ def health(request: HttpRequest) -> JsonResponse:
             # False means `task vendor` has not been run — the page says so
             # rather than rendering a blank area where the grid should be.
             "element_available": (VENDOR_DIR / "ena-browser.iife.js").is_file(),
-            "editable_columns": {entity: ena_service.editable_columns(entity) for entity in ena_service.ENTITIES},
+            "editable_columns": {entity: records.editable_columns(entity) for entity in records.ENTITIES},
         }
     )

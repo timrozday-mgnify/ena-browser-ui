@@ -39,9 +39,13 @@ These are the ones worth stating, because getting them wrong is how this app
 would do damage rather than merely break:
 
 - **Nothing in the test suite may reach ENA.** `tests/conftest.py` replaces
-  `ena_service.webin_client`; a test that needs the ENA Browser API stubs
-  `_record_xml` too. If a change makes ENA reachable from a test, the change is
-  wrong, not the fixture.
+  `ena_submission_toolkit.records.webin_client` with a `FakeClient` whose
+  `reports`, `submit` and `browser` are all fakes. If a change makes ENA
+  reachable from a test, the change is wrong, not the fixture.
+- **No ENA code in `server/`.** Listing, MODIFY and lifecycle actions live in
+  `ena-submission-toolkit` (`records.py`) and `ena-api-client`, so the other
+  apps in the ecosystem get the same behaviour. A change that needs new ENA
+  behaviour goes there — with its test — and this app calls it.
 - **Credentials stay in the request.** They arrive as headers, become a
   `Credentials`, and die with the request. Never log them, never persist them,
   never put them in a URL or a query string.

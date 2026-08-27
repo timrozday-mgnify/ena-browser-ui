@@ -5,8 +5,8 @@ from __future__ import annotations
 import contextlib
 from typing import Any
 
-import ena_service
 import pytest
+from ena_submission_toolkit import records
 
 STUDY_XML = b"""<?xml version="1.0" encoding="UTF-8"?>
 <PROJECT_SET>
@@ -89,10 +89,24 @@ class FakeReports:
         return self._list("files", max_results)
 
 
+class FakeBrowser:
+    """The Browser API fetch that modify_records reads before it patches."""
+
+    def __init__(self) -> None:
+        self.state: dict[str, Any] = {"xml": STUDY_XML, "error": None, "fetched": []}
+
+    def xml(self, accession: str) -> bytes:
+        self.state["fetched"].append(accession)
+        if self.state["error"] is not None:
+            raise self.state["error"]
+        return self.state["xml"]
+
+
 class FakeClient:
     def __init__(self) -> None:
         self.reports = FakeReports()
         self.submit = FakeSubmit()
+        self.browser = FakeBrowser()
         self.test: bool | None = None
 
 
@@ -102,30 +116,19 @@ def ena(monkeypatch: pytest.MonkeyPatch) -> FakeClient:
     client = FakeClient()
 
     @contextlib.contextmanager
-    def fake_webin_client(creds: ena_service.Credentials, test: bool):
+    def fake_webin_client(creds: records.Credentials, test: bool):
         client.test = test
         client.creds = creds
         yield client
 
-    monkeypatch.setattr(ena_service, "webin_client", fake_webin_client)
+    monkeypatch.setattr(records, "webin_client", fake_webin_client)
     return client
 
 
 @pytest.fixture
-def record_xml(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
-    """Stub the Browser API XML fetch that modify_records reads first."""
-    from lxml import etree
-
-    state: dict[str, Any] = {"xml": STUDY_XML, "error": None, "fetched": []}
-
-    def fake_fetch(creds: ena_service.Credentials, accession: str, *, test: bool):
-        state["fetched"].append(accession)
-        if state["error"] is not None:
-            raise state["error"]
-        return etree.fromstring(state["xml"])
-
-    monkeypatch.setattr(ena_service, "_record_xml", fake_fetch)
-    return state
+def record_xml(ena: FakeClient) -> dict[str, Any]:
+    """The fake Browser API's state, so a test can swap the XML or fail it."""
+    return ena.browser.state
 
 
 HEADERS = {"HTTP_X_WEBIN_USERNAME": "Webin-1", "HTTP_X_WEBIN_PASSWORD": "secret"}

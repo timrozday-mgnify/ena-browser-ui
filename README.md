@@ -116,7 +116,8 @@ a handful of fields per record — alias, accession, title, status. Building the
 submission from a report row would therefore silently delete everything ENA
 holds but does not report: a study's description, a sample's attributes.
 
-So an edit is applied like this, in `server/ena_service.py`:
+So an edit is applied like this, in `ena_submission_toolkit.records.modify_records()`
+(this app has no ENA code of its own — see [Where the ENA code lives](#where-the-ena-code-lives)):
 
 1. `GET /ena/browser/api/xml/<accession>` with the user's Webin credentials —
    which is what makes a *private* record readable — returning the record as
@@ -132,7 +133,24 @@ A partial document is worse than no submission.
 This is why `runs` are editable only in their alias, and `files` not at all —
 the table only carries fields this patcher can change without guessing at XSD
 element ordering. Widening it is a matter of adding entries to `_EDITABLE`
-(and a test), not new machinery.
+in `ena-submission-toolkit` (and a test), not new machinery.
+
+## Where the ENA code lives
+
+Not here. Every ENA request this app makes is made by a shared library, so the
+same behaviour is available to `mimicc-ena-submission-assistant` and to
+anything else built on this stack:
+
+| Layer | Repo | What it owns |
+|-------|------|--------------|
+| Transport | [`ena-api-client`](https://github.com/timrozday-mgnify/ena-api-client) | `client.submit` (Submission API), `client.reports` (Reports API), `client.browser.xml()` (a record's current XML) |
+| Behaviour | [`ena-submission-toolkit`](https://github.com/timrozday-mgnify/ena-submission-toolkit) | `records.list_records` / `modify_records` / `record_action` / `editable_columns` / `validate_credentials`, plus `Credentials` and the `webin_client` context manager |
+| View | [`ena-browser`](https://github.com/timrozday-mgnify/ena-browser) | the `<ena-browser>` grid element — rows in, events out, never an ENA request |
+| This app | — | HTTP endpoints, the server-side write lock, the action allow-list (no `kill`), and the page |
+
+`server/` therefore holds no ENA logic at all: `views_records.py` parses a
+request, checks the lock, calls `records.*`, and maps the exception types onto
+status codes.
 
 ## Safety
 
