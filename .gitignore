@@ -1,0 +1,22 @@
+.venv/
+__pycache__/
+*.pyc
+.env
+.DS_Store
+
+# Vendored ena-browser build artefacts (fetched by `task vendor`, not committed
+# until a release tag is pinned — see README "Pinned dependency versions").
+server/static/vendor/
+
+# Test/tooling artifacts
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+*.egg-info/
+test-results/
+playwright-report/
+
+# Editors
+.idea/
+.vscode/

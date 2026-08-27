@@ -1,0 +1,38 @@
+[project]
+name = "ena-browser-ui"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = [
+    # Web app (single-user, local-only: no database, auth, or cache)
+    "Django>=5,<6",
+    "gunicorn",
+
+    # Transport / models / XML
+    "httpx",
+    "pydantic>=2",
+    "lxml",
+
+    # Pinned sibling packages. Bump the tag when a sibling repo cuts a release.
+    "ena-api-client @ git+https://github.com/timrozday-mgnify/ena-api-client.git@v0.1.0",
+    "ena-submission-toolkit @ git+https://github.com/timrozday-mgnify/ena-submission-toolkit.git@v0.1.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest", "pytest-django", "playwright", "pytest-playwright", "ruff", "pre-commit"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+# The app runs via PYTHONPATH (server/), not as an importable distribution —
+# this table only exists so `pip install .` has something (empty) to build.
+[tool.setuptools]
+py-modules = []
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+ignore = ["E501"]

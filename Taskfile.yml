@@ -1,0 +1,64 @@
+version: "3"
+
+vars:
+  # Tag of timrozday-mgnify/ena-browser whose dist/ artefacts `task vendor`
+  # downloads into server/static/vendor/ena-browser/.
+  ENA_BROWSER_REF: v0.1.0
+  PORT: '{{.ENA_BROWSER_PORT | default "9200"}}'
+
+env:
+  PYTHONPATH: server
+  DJANGO_SETTINGS_MODULE: config.settings
+
+dotenv: [".env"]
+
+tasks:
+  venv:
+    desc: Create .venv and install the project (plus dev extras)
+    cmds:
+      - python3 -m venv .venv
+      - .venv/bin/pip install -e ".[dev]"
+      - .venv/bin/pre-commit install --install-hooks
+      - .venv/bin/pre-commit install --hook-type pre-push
+    status:
+      - test -x .venv/bin/python
+
+  vendor:
+    desc: >
+      Download the ena-browser IIFE bundle + CSS for tag ENA_BROWSER_REF into
+      server/static/vendor/ena-browser/. Re-run after bumping the tag.
+    cmds:
+      - mkdir -p server/static/vendor/ena-browser
+      - for: ["ena-browser.iife.js", "ena-browser.css"]
+        cmd: >
+          curl -fsSL -o server/static/vendor/ena-browser/{{.ITEM}}
+          https://github.com/timrozday-mgnify/ena-browser/releases/download/{{.ENA_BROWSER_REF}}/{{.ITEM}}
+
+  dev:
+    desc: Run locally with Django's autoreloading dev server
+    deps: [venv]
+    cmds:
+      - .venv/bin/python manage.py runserver 127.0.0.1:{{.PORT}} {{.CLI_ARGS}}
+
+  serve:
+    desc: Run as a server with gunicorn (no autoreload)
+    deps: [venv]
+    cmds:
+      - .venv/bin/gunicorn config.wsgi:application --bind 0.0.0.0:{{.PORT}} --workers 2 --timeout 120 {{.CLI_ARGS}}
+
+  test:
+    desc: Run the pytest suite
+    deps: [venv]
+    cmds:
+      - .venv/bin/python -m pytest {{.CLI_ARGS}}
+
+  test:ui:
+    desc: Run the Playwright UI tests
+    deps: [venv]
+    cmds:
+      - .venv/bin/python -m pytest tests/test_ui.py {{.CLI_ARGS}}
+
+  lint:
+    desc: Run every pre-commit hook over the whole tree
+    cmds:
+      - .venv/bin/pre-commit run --all-files {{.CLI_ARGS}}
