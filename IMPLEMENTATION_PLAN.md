@@ -21,8 +21,7 @@ rebuilding it with `ena-submission-toolkit`'s builders — see the README's
 | 8 — Undo/redo | done | `static/undo.js` |
 | 9 — Tests and packaging | done, **differently** | `tests/` (38 tests), `Taskfile.yml`, `.github/workflows/ci.yml` |
 
-Not built, and deliberately: no `Dockerfile`, no `docker-compose.yml` (Phase 9),
-and no MODIFY of run or experiment fields beyond `alias` (Phase 6).
+Not built, and deliberately: no `Dockerfile`, no `docker-compose.yml` (Phase 9).
 
 Phased build of `ena-browser-ui`. Each phase ends in a working app and is
 independently revertable; each has a **Check** that is the definition of done.

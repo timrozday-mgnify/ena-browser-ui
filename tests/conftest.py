@@ -34,6 +34,11 @@ class FakeReport:
     def model_dump(self) -> dict[str, Any]:
         return dict(self._fields)
 
+    def __getattr__(self, name: str) -> Any:
+        # The lineage filters read report fields as attributes, as the real
+        # pydantic models expose them; anything absent is empty, not an error.
+        return self._fields.get(name, "")
+
 
 class FakeSubmit:
     def __init__(self) -> None:
@@ -88,6 +93,20 @@ class FakeReports:
     def list_files(self, max_results: int = 5000) -> list[FakeReport]:
         return self._list("files", max_results)
 
+    def list_run_processes(self, max_results: int = 5000, **_kwargs: Any) -> list[FakeRunProcess]:
+        self.calls.append(("run-process", max_results))
+        return [FakeRunProcess("ERR1", "COMPLETED", "2026-01-02")]
+
+
+class FakeRunProcess:
+    """One row of the run-processing report."""
+
+    def __init__(self, run_accession: str, status: str, date: str = "", error: str = "") -> None:
+        self.run_accession = run_accession
+        self.process_status = status
+        self.process_date = date
+        self.error_message = error
+
 
 class FakeBrowser:
     """The Browser API fetch that modify_records reads before it patches."""
@@ -97,6 +116,12 @@ class FakeBrowser:
 
     def xml(self, accession: str) -> bytes:
         self.state["fetched"].append(accession)
+        if self.state["error"] is not None:
+            raise self.state["error"]
+        return self.state["xml"]
+
+    def xml_many(self, accessions: list[str]) -> bytes:
+        self.state["fetched"].extend(accessions)
         if self.state["error"] is not None:
             raise self.state["error"]
         return self.state["xml"]

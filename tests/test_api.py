@@ -48,6 +48,51 @@ def test_studies_are_listed_from_the_projects_report(client, ena):
     assert ena.reports.calls[0][0] == "projects"
 
 
+def test_search_filters_the_rows_without_asking_ena_to(client, ena):
+    """ENA has no search parameter — the criteria are applied over the rows."""
+    assert client.get("/api/records/studies?search=old+title", **HEADERS).json()["rows"]
+    assert client.get("/api/records/studies?search=nothing+like+it", **HEADERS).json()["rows"] == []
+
+
+def test_lineage_criteria_reach_the_library(client, ena):
+    # The fake account holds one record that nothing else points at.
+    assert client.get("/api/records/studies?unlinked=true", **HEADERS).json()["rows"]
+    assert client.get("/api/records/studies?linked_to=PRJEB999", **HEADERS).json()["rows"] == []
+    assert ("experiments", 5000) in ena.reports.calls
+
+
+def test_no_criteria_costs_no_lineage_lookup(client, ena):
+    client.get("/api/records/studies", **HEADERS)
+    assert [name for name, _ in ena.reports.calls] == ["projects"]
+
+
+def test_read_rows_carry_their_processing_status(client, ena):
+    body = client.get("/api/records/runs", **HEADERS).json()
+    assert ("run-process", 5000) in ena.reports.calls
+    # the fake report row is PRJEB1, not ERR1 — a run the report says nothing
+    # about must not acquire someone else's status
+    assert "process_status" not in body["rows"][0]
+
+
+def test_editable_fields_are_read_from_the_record_xml(client, ena, record_xml):
+    record_xml["xml"] = b'<RUN_SET><RUN alias="run-a" accession="ERR1"><TITLE>A title</TITLE></RUN></RUN_SET>'
+    body = post(client, "/api/records/runs/fields", {"accessions": ["ERR1"]}, **HEADERS).json()
+    assert body["fields"]["ERR1"] == {"alias": "run-a", "title": "A title"}
+    assert ena.browser.state["fetched"] == ["ERR1"]
+
+
+def test_editable_fields_are_a_read_not_a_write(client, ena, settings, record_xml):
+    settings.READONLY = True
+    record_xml["xml"] = b'<RUN_SET><RUN alias="run-a" accession="ERR1"/></RUN_SET>'
+    assert post(client, "/api/records/runs/fields", {"accessions": ["ERR1"]}, **HEADERS).status_code == 200
+
+
+def test_editable_fields_needs_an_accession_list(client, ena):
+    response = post(client, "/api/records/runs/fields", {}, **HEADERS)
+    assert response.status_code == 400
+    assert "accessions" in response.json()["detail"]
+
+
 def test_unknown_entity_is_a_400_not_a_crash(client, ena):
     response = client.get("/api/records/plasmids", **HEADERS)
     assert response.status_code == 400

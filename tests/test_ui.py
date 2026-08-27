@@ -43,6 +43,11 @@ ROWS = {
 }
 
 
+#: What the record XML carries but the Reports API does not — what
+#: /api/records/<entity>/fields answers with.
+FIELDS = {"PRJEB1": {"alias": "study-one", "title": "First study"}}
+
+
 def _free_port() -> int:
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))
@@ -79,17 +84,29 @@ def app_url() -> str:
 def app(page, app_url):
     """The page with the ENA-facing endpoints stubbed and credentials set."""
     calls: list[str] = []
+    urls: list[str] = []
 
     def records(route, request):
-        entity = request.url.rsplit("/", 1)[-1]
+        # The fetch criteria ride along as a query string.
+        entity = request.url.rsplit("/", 1)[-1].split("?")[0]
         calls.append(entity)
+        urls.append(request.url)
         route.fulfill(
             status=200,
             content_type="application/json",
             body=json.dumps({"rows": ROWS.get(entity, []), "editable_columns": ["alias", "title"]}),
         )
 
+    def fields(route, request):
+        calls.append("fields")
+        route.fulfill(
+            status=200,
+            content_type="application/json",
+            body=json.dumps({"fields": FIELDS}),
+        )
+
     page.route("**/api/records/*", records)
+    page.route("**/api/records/*/fields", fields)
     page.route(
         "**/api/records/modify/preview",
         lambda route: route.fulfill(
@@ -142,6 +159,7 @@ def app(page, app_url):
     page.goto(app_url)
     page.wait_for_function("() => document.getElementById('rowCount').textContent.includes('records')")
     page.calls = calls  # type: ignore[attr-defined]
+    page.urls = urls  # type: ignore[attr-defined]
     return page
 
 
@@ -178,6 +196,28 @@ def test_switching_tab_fetches_the_other_entity(app):
     assert app.calls[-1] == "samples"
 
 
+def test_criteria_ride_along_with_the_fetch(app):
+    """The search bars are criteria on the request, not the grid's own filters."""
+    app.fill("#qSearch", "gut metagenome")
+    app.fill("#qLinked", "PRJEB1234")
+    app.press("#qSearch", "Enter")
+    app.wait_for_function("() => document.getElementById('rowCount').textContent.includes('matching')")
+    assert "search=gut+metagenome" in app.urls[-1]
+    assert "linked_to=PRJEB1234" in app.urls[-1]
+
+    app.click("#qClear")
+    app.wait_for_function("() => !document.getElementById('rowCount').textContent.includes('matching')")
+    assert "?" not in app.urls[-1]
+
+
+def test_criteria_survive_a_tab_change(app):
+    app.check("#qUnlinked")
+    app.wait_for_function("() => document.getElementById('rowCount').textContent.includes('matching')")
+    app.click("#tabs button[data-entity='samples']")
+    app.wait_for_function("() => document.getElementById('grid').getRows().length === 1")
+    assert app.urls[-1].endswith("/api/records/samples?unlinked=true")
+
+
 # --- the read/write gate ----------------------------------------------------
 
 
@@ -188,16 +228,19 @@ def test_read_only_is_the_default_and_submit_is_disabled(app):
 
 
 def test_write_mode_unlocks_editing_and_row_actions(app):
-    app.on("dialog", lambda dialog: dialog.accept())
-    app.click("#writeToggle")
-    assert app.evaluate("() => document.getElementById('grid').config.mode") == "edit"
+    enable_write_mode(app)
     assert app.evaluate("() => document.getElementById('grid').config.rowActions.length") == 4
     assert "Write mode — TEST" in app.locator("#banner").text_content()
 
 
+def test_write_mode_fetches_the_fields_only_the_record_xml_has(app):
+    assert "fields" not in app.calls  # read-only browsing pays nothing for them
+    enable_write_mode(app)
+    assert app.calls[-1] == "fields"
+
+
 def test_write_mode_is_not_remembered_across_a_reload(app):
-    app.on("dialog", lambda dialog: dialog.accept())
-    app.click("#writeToggle")
+    enable_write_mode(app)
     app.reload()
     app.wait_for_function("() => document.getElementById('rowCount').textContent.includes('records')")
     assert app.locator("#writeToggle").is_checked() is False
@@ -278,6 +321,9 @@ def test_loading_an_entity_starts_a_fresh_history(app):
 def enable_write_mode(page):
     page.on("dialog", lambda dialog: dialog.accept())
     page.click("#writeToggle")
+    # Entering write mode re-reads the rows, this time with the fields that
+    # only exist in the record XML; the grid flips to "edit" when that lands.
+    page.wait_for_function("() => document.getElementById('grid').config.mode === 'edit'")
 
 
 def edit_cell(page, current, new):

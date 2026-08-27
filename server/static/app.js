@@ -118,7 +118,10 @@ $("writeToggle").onchange = (event) => {
   }
   WRITE = event.target.checked;
   reflectWriteMode();
-  applyMode();
+  // Entering write mode needs a reload, not just a mode switch: the fields
+  // that only exist in the record XML are fetched with the rows.
+  if (WRITE) loadEntity();
+  else applyMode();
 };
 
 $("credToggle").onclick = () => { $("credPanel").hidden = !$("credPanel").hidden; };

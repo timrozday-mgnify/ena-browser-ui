@@ -78,6 +78,22 @@ def credentials_validate(request: HttpRequest) -> JsonResponse | HttpResponseNot
     return _run(call)
 
 
+def _criteria(request: HttpRequest) -> dict[str, Any]:
+    """The fetch criteria from the query string, as ``list_records`` kwargs.
+
+    ENA answers none of these itself beyond the release status — the Reports
+    API has no search and no relational query — so they are the library's
+    filters, named the same way, passed straight through.
+    """
+    query = request.GET
+    return {
+        "status": query.get("status") or "all",
+        "search": query.get("search", "").strip(),
+        "linked_to": query.get("linked_to", "").strip(),
+        "unlinked": query.get("unlinked") == "true",
+    }
+
+
 def records_list(request: HttpRequest, entity: str) -> JsonResponse | HttpResponseNotAllowed:
     if request.method != "GET":
         return HttpResponseNotAllowed(["GET"])
@@ -86,8 +102,32 @@ def records_list(request: HttpRequest, entity: str) -> JsonResponse | HttpRespon
         return error
 
     def call() -> dict[str, Any]:
-        rows = records.list_records(creds, entity, test=test)
+        rows = records.list_records(creds, entity, test=test, **_criteria(request))
         return {"rows": rows, "editable_columns": records.editable_columns(entity)}
+
+    return _run(call)
+
+
+def records_fields(request: HttpRequest, entity: str) -> JsonResponse | HttpResponseNotAllowed:
+    """The current value of every editable field, for the given accessions.
+
+    The Reports API does not return a run's title or an experiment's library
+    and instrument — they live in the record's XML. The grid cannot let anyone
+    edit a field it has never shown them, so the page asks for these once it is
+    in write mode and merges them into the rows it already has. A read, not a
+    write: no write lock, nothing is sent to ENA.
+    """
+    if request.method != "POST":
+        return HttpResponseNotAllowed(["POST"])
+    creds, test, error = _guard(request)
+    if error is not None:
+        return error
+
+    def call() -> dict[str, Any]:
+        accessions = _body(request).get("accessions")
+        if not isinstance(accessions, list):
+            raise ValueError('Expected an "accessions" list')
+        return {"fields": records.read_editable_fields(creds, entity, [str(a) for a in accessions], test=test)}
 
     return _run(call)
 

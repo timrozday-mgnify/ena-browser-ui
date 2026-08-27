@@ -106,6 +106,22 @@
 
   <div id="banner" class="banner"></div>
 
+  <div class="row" id="criteria">
+    <input type="text" id="qSearch" size="26" placeholder="search every column" />
+    <input type="text" id="qLinked" size="30" placeholder="linked to accession, e.g. PRJEB1234" />
+    <label class="switch"><input type="checkbox" id="qUnlinked" /> unlinked only</label>
+    <select id="qStatus">
+      <option value="all">any status</option>
+      <option value="PRIVATE">private</option>
+      <option value="PUBLIC">public</option>
+      <option value="SUPPRESSED">suppressed</option>
+      <option value="CANCELLED">cancelled</option>
+    </select>
+    <button class="secondary" id="qClear">Clear</button>
+    <span class="spacer" style="flex:1"></span>
+    <span class="muted">criteria apply on fetch, and stay put when you change tab</span>
+  </div>
+
   <div class="row">
     <button id="reload">Reload</button>
     <span id="rowCount" class="muted">no records loaded</span>

@@ -25,7 +25,7 @@ pytest with ENA faked out, Playwright with the API stubbed); that file's
 **Progress** table maps each phase to the code. The one deviation worth knowing
 about — how a MODIFY is built — is
 [How a change reaches ENA](#how-a-change-reaches-ena). Not built, deliberately:
-no container image, and no MODIFY of run or experiment fields beyond `alias`.
+no container image.
 
 ---
 
@@ -46,7 +46,9 @@ libraries so anything learned here transfers back.
 |---|---|
 | **Credentials** | Webin ID + password entered in the page, held in `sessionStorage` for that tab only, sent as `X-Webin-Username` / `X-Webin-Password` headers on each request. Never written to disk, never stored server-side. Test/production is a switch in the header. |
 | **Entities** | Studies, samples, reads (runs) and experiments as first-class tabs; analyses and files come free from the element's entity defaults, read-only. |
+| **Read processing status** | Read rows carry ENA's file-processing status (`process_status`, `process_date`, `process_error`) alongside the release status, so "submitted" and "archived" are visibly different things. |
 | **Browsing** | Per-column filters, multi-column sort, pin/hide/reorder/resize columns, include or exclude cancelled and suppressed records. All of this is the element's, not ours. |
+| **Fetch criteria** | A row of search bars above the grid: free text across every column, *linked to* an accession (the samples in a study, the reads for a sample — resolved through the experiments that join them), *unlinked only* (samples with no experiment or read against them), and a release status. These are criteria on the **request**, not the grid's client-side column filters, and they stay put when you change tab. ENA answers none of them itself — the Reports API has no search and no relational query — so `ena_submission_toolkit.records.list_records` applies them over the report rows. |
 | **Read-only ⇄ read/write** | One explicit toggle. Read-only is the default and the server refuses writes outright unless `ENA_BROWSER_READONLY=false`, so a mis-click in the UI cannot reach ENA. |
 | **Modifications** | In write mode, edits to an allow-list of fields accumulate into a change set. Submitting is deliberately a two-step act: **generate the MODIFY manifests**, read the XML that would go to ENA in the panel under the grid, then submit. Accessions and status are never editable — status changes go through lifecycle actions. |
 | **Manifest inspection** | The *MODIFY manifests* panel holds one entry per record: the fields changed, and the full submission document built from the record as ENA currently holds it. Submit stays locked until manifests exist for the current edits, and any further edit re-locks it. |
@@ -143,10 +145,47 @@ the manifests have been generated, and any edit after that invalidates them.
 If step 1 fails, the record is reported as failed and **nothing is submitted**.
 A partial document is worse than no submission.
 
-This is why `runs` are editable only in their alias, and `files` not at all —
-the table only carries fields this patcher can change without guessing at XSD
+`files` are not editable at all, and no entity is editable in every field: the
+table only carries fields this patcher can change without guessing at XSD
 element ordering. Widening it is a matter of adding entries to `_EDITABLE`
 in `ena-submission-toolkit` (and a test), not new machinery.
+
+### Reads and experiments
+
+A run's title and an experiment's design, library and instrument are editable,
+which raises a problem the other entities do not have: the Reports API never
+returns those fields, so there is no cell in the grid to edit them in. Write
+mode therefore re-reads the rows and asks
+`POST /api/records/<entity>/fields` for them
+(`records.read_editable_fields()`), which pulls them out of the same Browser
+API documents a MODIFY patches — one request per 100 accessions — and merges
+them into the rows. What you edit is what ENA currently holds.
+
+Read-only browsing pays nothing for this: the fetch only happens in write mode.
+
+| Entity | Editable |
+|---|---|
+| Studies, samples, analyses | `alias`, `title` |
+| Reads (runs) | `alias`, `title`, `run_center`, `run_date` |
+| Experiments | `alias`, `title`, `design_description`, `library_name`, `library_strategy`, `library_source`, `library_selection`, `instrument_model` |
+| Files | — |
+
+An experiment's `instrument_model` is patched inside whichever platform block
+the experiment was registered with, so the model can be corrected but the
+platform cannot be swapped. `LIBRARY_LAYOUT` (single vs paired) is structural
+and deliberately absent.
+
+## Has ENA processed my reads?
+
+Registering a run and archiving its read files are two different events, and
+`/report/runs` only answers the first. Read rows therefore also carry
+`process_status`, `process_date` and `process_error`, merged in from the
+Reports API's `/report/run-process` — ENA's own vocabulary
+(`COMPLETED`, `IN_PROGRESS`, `ERROR`, ...), passed through verbatim rather
+than mapped onto anything of ours. It is a column like any other: filter and
+sort on it to find the reads still in the queue, or the ones that failed.
+
+Nothing else pays for it — the extra report is fetched for reads only.
 
 ## Where the ENA code lives
 
@@ -156,8 +195,8 @@ anything else built on this stack:
 
 | Layer | Repo | What it owns |
 |-------|------|--------------|
-| Transport | [`ena-api-client`](https://github.com/timrozday-mgnify/ena-api-client) | `client.submit` (Submission API), `client.reports` (Reports API), `client.browser.xml()` (a record's current XML) |
-| Behaviour | [`ena-submission-toolkit`](https://github.com/timrozday-mgnify/ena-submission-toolkit) | `records.list_records` / `modify_records` / `record_action` / `editable_columns` / `validate_credentials`, plus `Credentials` and the `webin_client` context manager |
+| Transport | [`ena-api-client`](https://github.com/timrozday-mgnify/ena-api-client) | `client.submit` (Submission API), `client.reports` (Reports API), `client.browser.xml()` / `.xml_many()` (a record's current XML), `reports.list_run_processes()` (read-file processing status) |
+| Behaviour | [`ena-submission-toolkit`](https://github.com/timrozday-mgnify/ena-submission-toolkit) | `records.list_records` / `read_editable_fields` / `modify_records` / `record_action` / `editable_columns` / `validate_credentials`, plus `Credentials` and the `webin_client` context manager |
 | View | [`ena-browser`](https://github.com/timrozday-mgnify/ena-browser) | the `<ena-browser>` grid element — rows in, events out, never an ENA request |
 | This app | — | HTTP endpoints, the server-side write lock, the action allow-list (no `kill`), the manifest gate in the page, and the page itself |
 

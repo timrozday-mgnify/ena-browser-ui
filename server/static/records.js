@@ -183,6 +183,60 @@ $("logClear").onclick = () => {
 };
 
 // --- Loading ----------------------------------------------------------------
+/** Report rows + the editable fields only the record XML carries.
+ *
+ *  A run's title and an experiment's library/instrument are not in the Reports
+ *  API's answer, so without this there would be no cell to edit them in. Only
+ *  worth the requests in write mode; a failure here degrades to the report's
+ *  own columns rather than losing the grid. */
+async function withEditableFields(rows) {
+  const accessions = rows.map((row) => row.accession).filter(Boolean);
+  if (!accessions.length) return rows;
+  try {
+    const body = await api(`/api/records/${ENTITY}/fields`, {
+      method: "POST",
+      body: JSON.stringify({ accessions }),
+    });
+    const fields = body.fields || {};
+    return rows.map((row) => ({ ...row, ...(fields[row.accession] || {}) }));
+  } catch (error) {
+    banner("warn", `Loaded ${ENTITY}, but not the fields held only in the record XML — ` +
+      `those columns will be missing: ${error.message}`);
+    return rows;
+  }
+}
+
+// --- Fetch criteria ---------------------------------------------------------
+// The Webin Reports API takes a release status and nothing else — no search,
+// no "which samples are in this study". Everything here is applied server-side
+// by ena-submission-toolkit over the rows it fetched, so it is a criterion on
+// the *request*, not the column filters the grid already does client-side.
+// Deliberately not per entity: "everything linked to PRJEB1234" is a question
+// worth asking of the samples tab and then the reads tab without retyping.
+function criteriaQuery() {
+  const params = new URLSearchParams();
+  const search = $("qSearch").value.trim();
+  const linked = $("qLinked").value.trim();
+  if (search) params.set("search", search);
+  if (linked) params.set("linked_to", linked);
+  if ($("qUnlinked").checked) params.set("unlinked", "true");
+  if ($("qStatus").value !== "all") params.set("status", $("qStatus").value);
+  return params.toString();
+}
+
+for (const id of ["qSearch", "qLinked"]) {
+  $(id).onkeydown = (event) => { if (event.key === "Enter") loadEntity(); };
+}
+$("qUnlinked").onchange = () => loadEntity();
+$("qStatus").onchange = () => loadEntity();
+$("qClear").onclick = () => {
+  $("qSearch").value = "";
+  $("qLinked").value = "";
+  $("qUnlinked").checked = false;
+  $("qStatus").value = "all";
+  loadEntity();
+};
+
 async function loadEntity() {
   if (!credsConfigured()) {
     $("rowCount").textContent = "no credentials";
@@ -193,13 +247,17 @@ async function loadEntity() {
   $("rowCount").textContent = "loading…";
   grid.applyConfig({ entity: ENTITY, mode: "read", rowActions: WRITE ? ROW_ACTIONS : [] });
   try {
-    const body = await api(`/api/records/${ENTITY}`);
+    const query = criteriaQuery();
+    const body = await api(`/api/records/${ENTITY}${query ? `?${query}` : ""}`);
+    let rows = body.rows || [];
+    if (canEdit()) rows = await withEditableFields(rows);
     applySavedLayout(ENTITY);
-    grid.setRows(body.rows || []);
+    grid.setRows(rows);
     clearManifests();
     applyMode();
     resetUndo();
-    $("rowCount").textContent = `${(body.rows || []).length} records from ${envLabel()}`;
+    $("rowCount").textContent =
+      `${rows.length} records from ${envLabel()}${query ? " matching the criteria" : ""}`;
     if (WRITE) reflectWriteMode(); else clearBanner();
   } catch (error) {
     $("rowCount").textContent = "load failed";
