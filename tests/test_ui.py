@@ -49,6 +49,8 @@ MANIFEST_XML = (
     "<TITLE>Renamed study</TITLE></PROJECT></PROJECT_SET></WEBIN>"
 )
 
+UNDO_XML = MANIFEST_XML.replace("Renamed study", "First study")
+
 ROWS = {
     "studies": [
         {"accession": "PRJEB1", "alias": "study-one", "title": "First study", "status": "PRIVATE"},
@@ -163,6 +165,8 @@ def app(page, app_url):
                             "warnings": [],
                             "errors": [],
                             "xml": MANIFEST_XML,
+                            "previous": {"title": "First study"},
+                            "undo_xml": UNDO_XML,
                         }
                     ],
                 }
@@ -461,3 +465,88 @@ def test_undo_takes_back_a_staged_edit(app):
     assert app.evaluate("() => document.getElementById('grid').getChangeSet().rows.length") == 1
     # Back to the edit the manifests were built from, so submission unlocks again.
     app.wait_for_function("() => !document.getElementById('submit').disabled")
+
+
+# --- change history ---------------------------------------------------------
+
+
+def submit_an_edit(app):
+    enable_write_mode(app)
+    edit_cell(app, "First study", "Renamed study")
+    generate_manifests(app)
+    app.click("#submit")
+    app.click("#diffDialog button[value='ok']")
+    app.wait_for_function("() => document.getElementById('history').children.length === 1")
+
+
+def test_an_accepted_change_becomes_a_history_entry_holding_its_documents(app):
+    submit_an_edit(app)
+    entry = app.locator("#history details").first
+    summary = entry.locator("summary").text_content()
+    assert "PRJEB1" in summary and "studies" in summary and "title" in summary
+
+    entry.locator("summary").click()  # the contents are behind the click
+    body = entry.locator(".body").text_content()
+    assert "First study" in body and "Renamed study" in body
+    assert "Renamed study</TITLE>" in body  # the document that was sent
+    assert "First study</TITLE>" in body  # the manifest that would undo it
+
+
+def test_the_history_survives_a_reload(app, app_url):
+    submit_an_edit(app)
+    app.goto(app_url)
+    app.wait_for_function(LOADED)
+    assert app.locator("#history details").count() == 1
+
+
+def test_reverting_submits_the_values_ena_held_before(app):
+    submit_an_edit(app)
+    sent: list[dict] = []
+    app.route(
+        "**/api/records/modify",
+        lambda route: (
+            sent.append(route.request.post_data_json),
+            route.fulfill(
+                status=200,
+                content_type="application/json",
+                body=json.dumps(
+                    {
+                        "success": True,
+                        "results": [
+                            {
+                                "accession": "PRJEB1",
+                                "changes": {"title": "First study"},
+                                "success": True,
+                                "messages": ["INFO: study updated"],
+                                "info": ["INFO: study updated"],
+                                "warnings": [],
+                                "errors": [],
+                                "xml": UNDO_XML,
+                                "previous": {"title": "Renamed study"},
+                                "undo_xml": MANIFEST_XML,
+                            }
+                        ],
+                    }
+                ),
+            ),
+        )[-1],
+    )
+    # enable_write_mode() left a dialog handler accepting the revert confirm.
+    app.click("#history details:first-child summary")
+    app.click("#history button[data-revert]")
+    app.wait_for_function("() => document.getElementById('history').children.length === 2")
+
+    assert sent == [{"entity": "studies", "records": [{"accession": "PRJEB1", "changes": {"title": "First study"}}]}]
+    # The revert is itself a change on the stack, and the change it undid is
+    # marked so it cannot be reverted twice.
+    assert "revert" in app.locator("#history details").first.locator("summary").text_content()
+    assert app.locator("#history button[data-revert]").last.is_disabled()
+
+
+def test_reverting_needs_write_mode(app):
+    submit_an_edit(app)
+    app.uncheck("#writeToggle")
+    app.click("#history details:first-child summary")
+    app.click("#history button[data-revert]")
+    app.wait_for_function("() => document.getElementById('banner').classList.contains('bad')")
+    assert "write mode" in app.locator("#banner").text_content()

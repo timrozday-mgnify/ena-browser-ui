@@ -360,6 +360,9 @@ $("submit").onclick = async () => {
     });
     const results = body.results || [];
     logSubmission(entries, results);
+    // Whatever ENA accepted is now a state to come back to; the results carry
+    // the pre-change values that make the way back.
+    pushHistory(ENTITY, results);
     const failed = results.filter((result) => !result.success);
     if (body.success) {
       // ENA now holds the new values; drop the local ones and re-fetch rather
