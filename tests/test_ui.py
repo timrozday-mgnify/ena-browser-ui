@@ -190,6 +190,31 @@ def test_records_load_and_are_counted(app):
     assert "2 records from TEST" in app.locator("#rowCount").text_content()
 
 
+def test_browsing_all_of_ena_switches_source_and_drops_the_other_criteria(app):
+    """The Portal API resolves the relationship itself and knows only public
+    data, so the criteria it cannot answer are disabled rather than sent."""
+    app.fill("#qSearch", "gut metagenome")
+    app.select_option("#qSource", "ena")
+    app.fill("#qLinked", "PRJEB1787")
+    app.press("#qLinked", "Enter")
+    app.wait_for_function("() => document.getElementById('rowCount').textContent.includes('from ENA')")
+
+    assert "source=ena" in app.urls[-1]
+    assert "linked_to=PRJEB1787" in app.urls[-1]
+    assert "search=" not in app.urls[-1]
+    for selector in ("#qSearch", "#qUnlinked", "#qStatus", "#qFullFields"):
+        assert app.locator(selector).is_disabled(), selector
+
+
+def test_public_records_are_never_editable(app):
+    """ENA would refuse a MODIFY of a record this account does not own, so
+    write mode must not offer the edit while browsing them."""
+    enable_write_mode(app)
+    app.select_option("#qSource", "ena")
+    app.wait_for_function("() => document.getElementById('grid').config.mode === 'read'")
+    assert app.evaluate("() => document.getElementById('grid').config.rowActions.length") == 0
+
+
 def test_switching_tab_fetches_the_other_entity(app):
     app.click("#tabs button[data-entity='samples']")
     app.wait_for_function("() => document.getElementById('grid').getRows().length === 1")
