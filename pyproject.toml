@@ -13,11 +13,8 @@ dependencies = [
     "lxml",
 
     # Pinned sibling packages. Bump the tag when a sibling repo cuts a release.
-    # NOTE: this app needs `ena_submission_toolkit.records` (which needs
-    # `ena_api.WebinClient.browser`) — both are newer than the tags below, so
-    # these two pins must be bumped before the next clean install works.
-    "ena-api-client @ git+https://github.com/timrozday-mgnify/ena-api-client.git@v0.1.0",
-    "ena-submission-toolkit @ git+https://github.com/timrozday-mgnify/ena-submission-toolkit.git@v0.1.0",
+    "ena-api-client @ git+https://github.com/timrozday-mgnify/ena-api-client.git@v0.1.2",
+    "ena-submission-toolkit @ git+https://github.com/timrozday-mgnify/ena-submission-toolkit.git@v0.1.2",
 ]
 
 [project.optional-dependencies]
