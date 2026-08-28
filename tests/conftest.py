@@ -5,8 +5,8 @@ from __future__ import annotations
 import contextlib
 from typing import Any
 
-import ena_service
 import pytest
+from ena_submission_toolkit import records
 
 STUDY_XML = b"""<?xml version="1.0" encoding="UTF-8"?>
 <PROJECT_SET>
@@ -33,6 +33,11 @@ class FakeReport:
 
     def model_dump(self) -> dict[str, Any]:
         return dict(self._fields)
+
+    def __getattr__(self, name: str) -> Any:
+        # The lineage filters read report fields as attributes, as the real
+        # pydantic models expose them; anything absent is empty, not an error.
+        return self._fields.get(name, "")
 
 
 class FakeSubmit:
@@ -88,11 +93,45 @@ class FakeReports:
     def list_files(self, max_results: int = 5000) -> list[FakeReport]:
         return self._list("files", max_results)
 
+    def list_run_processes(self, max_results: int = 5000, **_kwargs: Any) -> list[FakeRunProcess]:
+        self.calls.append(("run-process", max_results))
+        return [FakeRunProcess("ERR1", "COMPLETED", "2026-01-02")]
+
+
+class FakeRunProcess:
+    """One row of the run-processing report."""
+
+    def __init__(self, run_accession: str, status: str, date: str = "", error: str = "") -> None:
+        self.run_accession = run_accession
+        self.process_status = status
+        self.process_date = date
+        self.error_message = error
+
+
+class FakeBrowser:
+    """The Browser API fetch that modify_records reads before it patches."""
+
+    def __init__(self) -> None:
+        self.state: dict[str, Any] = {"xml": STUDY_XML, "error": None, "fetched": []}
+
+    def xml(self, accession: str) -> bytes:
+        self.state["fetched"].append(accession)
+        if self.state["error"] is not None:
+            raise self.state["error"]
+        return self.state["xml"]
+
+    def xml_many(self, accessions: list[str]) -> bytes:
+        self.state["fetched"].extend(accessions)
+        if self.state["error"] is not None:
+            raise self.state["error"]
+        return self.state["xml"]
+
 
 class FakeClient:
     def __init__(self) -> None:
         self.reports = FakeReports()
         self.submit = FakeSubmit()
+        self.browser = FakeBrowser()
         self.test: bool | None = None
 
 
@@ -102,30 +141,19 @@ def ena(monkeypatch: pytest.MonkeyPatch) -> FakeClient:
     client = FakeClient()
 
     @contextlib.contextmanager
-    def fake_webin_client(creds: ena_service.Credentials, test: bool):
+    def fake_webin_client(creds: records.Credentials, test: bool):
         client.test = test
         client.creds = creds
         yield client
 
-    monkeypatch.setattr(ena_service, "webin_client", fake_webin_client)
+    monkeypatch.setattr(records, "webin_client", fake_webin_client)
     return client
 
 
 @pytest.fixture
-def record_xml(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
-    """Stub the Browser API XML fetch that modify_records reads first."""
-    from lxml import etree
-
-    state: dict[str, Any] = {"xml": STUDY_XML, "error": None, "fetched": []}
-
-    def fake_fetch(creds: ena_service.Credentials, accession: str, *, test: bool):
-        state["fetched"].append(accession)
-        if state["error"] is not None:
-            raise state["error"]
-        return etree.fromstring(state["xml"])
-
-    monkeypatch.setattr(ena_service, "_record_xml", fake_fetch)
-    return state
+def record_xml(ena: FakeClient) -> dict[str, Any]:
+    """The fake Browser API's state, so a test can swap the XML or fail it."""
+    return ena.browser.state
 
 
 HEADERS = {"HTTP_X_WEBIN_USERNAME": "Webin-1", "HTTP_X_WEBIN_PASSWORD": "secret"}

@@ -49,6 +49,24 @@
   dialog::backdrop { background:rgba(0,0,0,.5); }
   dialog table { border-collapse:collapse; width:100%; font-size:13px; }
   dialog th, dialog td { border-bottom:1px solid var(--line); padding:4px 8px; text-align:left; }
+  .panel h2 { font-size:14px; margin:0; }
+  .panel .head { display:flex; align-items:center; gap:10px; margin-bottom:8px; }
+  .empty { color:var(--muted); margin:0; }
+  details.entry { border:1px solid var(--line); border-left-width:3px; border-radius:5px; margin-bottom:6px; background:var(--bg); }
+  details.entry > summary { cursor:pointer; padding:6px 10px; font-size:13px; }
+  details.entry.ok { border-left-color:var(--ok); }
+  details.entry.bad { border-left-color:var(--bad); }
+  details.entry .body { padding:0 10px 10px; font-size:13px; }
+  details.entry pre { background:var(--panel); border:1px solid var(--line); border-radius:4px;
+                      padding:8px; overflow:auto; max-height:340px; font-size:12px; margin:8px 0 0;
+                      white-space:pre-wrap; word-break:break-word; }
+  .msg { margin:2px 0; font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:12px; }
+  .msg.warn { color:var(--warn); }
+  .msg.bad { color:var(--bad); }
+  .fields { margin:4px 0 0; padding-left:18px; }
+  .state.warn { color:var(--warn); }
+  .state.bad { color:var(--bad); }
+  .state.ok { color:var(--ok); }
 </style>
 </head>
 <body>
@@ -88,6 +106,22 @@
 
   <div id="banner" class="banner"></div>
 
+  <div class="row" id="criteria">
+    <input type="text" id="qSearch" size="26" placeholder="search every column" />
+    <input type="text" id="qLinked" size="30" placeholder="linked to accession, e.g. PRJEB1234" />
+    <label class="switch"><input type="checkbox" id="qUnlinked" /> unlinked only</label>
+    <select id="qStatus">
+      <option value="all">any status</option>
+      <option value="PRIVATE">private</option>
+      <option value="PUBLIC">public</option>
+      <option value="SUPPRESSED">suppressed</option>
+      <option value="CANCELLED">cancelled</option>
+    </select>
+    <button class="secondary" id="qClear">Clear</button>
+    <span class="spacer" style="flex:1"></span>
+    <span class="muted">criteria apply on fetch, and stay put when you change tab</span>
+  </div>
+
   <div class="row">
     <button id="reload">Reload</button>
     <span id="rowCount" class="muted">no records loaded</span>
@@ -98,6 +132,32 @@
   </div>
 
   <ena-browser id="grid" entity="studies" mode="read" height="600"></ena-browser>
+
+  <section class="panel" id="manifestPanel">
+    <div class="head">
+      <h2>MODIFY manifests</h2>
+      <span id="manifestState" class="muted">no staged changes</span>
+      <span class="spacer" style="flex:1"></span>
+      <button class="secondary" id="generate" disabled>Generate manifests</button>
+    </div>
+    <p id="manifestEmpty" class="empty">
+      Nothing staged. Edit a cell in write mode, then generate the manifests — each one is the exact
+      XML document that would be sent to ENA, built from the record as ENA currently holds it.
+      Submission stays locked until the manifests for the current edits have been generated here.
+    </p>
+    <div id="manifests"></div>
+  </section>
+
+  <section class="panel" id="logPanel">
+    <div class="head">
+      <h2>Submission log</h2>
+      <span class="muted">everything this tab has sent to ENA, and everything ENA said back</span>
+      <span class="spacer" style="flex:1"></span>
+      <button class="secondary" id="logClear">Clear</button>
+    </div>
+    <p id="logEmpty" class="empty">Nothing submitted from this tab yet.</p>
+    <div id="log"></div>
+  </section>
 </main>
 
 <dialog id="diffDialog">

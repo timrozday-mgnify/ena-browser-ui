@@ -13,16 +13,15 @@ rebuilding it with `ena-submission-toolkit`'s builders — see the README's
 |---|---|---|
 | 1 — Skeleton that serves a page | done | `manage.py`, `server/config/`, `server/views_core.py`, `server/static/index.html`, `theme.js` |
 | 2 — Credentials | done | `server/webin_creds.py`, `static/creds.js`, `static/app.js` (`api()`) |
-| 3 — Read-only browsing | done | `ena_service.list_records`, `views_records.records_list`, `static/records.js` |
+| 3 — Read-only browsing | done | `records.list_records`, `views_records.records_list`, `static/records.js` |
 | 4 — Persisted layout | done | `static/state.js` |
 | 5 — Read/write toggle | done | `config/settings.py` (`READONLY`), `views_records._guard`, `static/app.js` |
-| 6 — Editing and MODIFY | done, **differently** | `ena_service.modify_records` + `_EDITABLE`, the diff dialog in `static/records.js` |
-| 7 — Lifecycle actions | done | `ena_service.record_action`, the `row-action` handler in `static/records.js` |
+| 6 — Editing and MODIFY | done, **differently** | `records.modify_records` + `_EDITABLE`, the diff dialog in `static/records.js` |
+| 7 — Lifecycle actions | done | `records.record_action`, the `row-action` handler in `static/records.js` |
 | 8 — Undo/redo | done | `static/undo.js` |
 | 9 — Tests and packaging | done, **differently** | `tests/` (38 tests), `Taskfile.yml`, `.github/workflows/ci.yml` |
 
-Not built, and deliberately: no `Dockerfile`, no `docker-compose.yml` (Phase 9),
-and no MODIFY of run or experiment fields beyond `alias` (Phase 6).
+Not built, and deliberately: no `Dockerfile`, no `docker-compose.yml` (Phase 9).
 
 Phased build of `ena-browser-ui`. Each phase ends in a working app and is
 independently revertable; each has a **Check** that is the definition of done.
@@ -44,8 +43,7 @@ does not exist yet, Phase 1 may temporarily point `ENA_BROWSER_REF` at a local
 manage.py                  Django entrypoint (PYTHONPATH=server)
 server/
   config/{settings,urls,wsgi}.py
-  webin_creds.py           request headers -> Credentials, or 401
-  ena_service.py           the only module that talks to ENA
+  webin_creds.py           request headers -> records.Credentials, or 401
   views_core.py            index + health + static serving
   views_records.py         /api/records/*
   static/
@@ -55,7 +53,8 @@ tests/
   test_api.py  test_ui.py  conftest.py
 ```
 
-Nine Python files and six JS files is the whole app. If a phase wants a tenth,
+Eight Python files and six JS files is the whole app (ENA itself is
+`ena_submission_toolkit.records`, not a module here). If a phase wants a tenth,
 say why in the PR.
 
 ---
@@ -85,9 +84,9 @@ defined; the grid renders empty; `/api/health` returns the flags.
 2. Every `fetch` goes through one `api()` helper that attaches
    `X-Webin-Username` / `X-Webin-Password` and the `test` flag, and surfaces a
    401 as "enter your Webin credentials" rather than a console error.
-3. `server/webin_creds.py`: headers → `ena_service.Credentials`, or a 401
+3. `server/webin_creds.py`: headers → `records.Credentials`, or a 401
    `JsonResponse`. Lifted from the assistant unchanged.
-4. `POST /api/credentials/validate` → `ena_service.validate_credentials()`
+4. `POST /api/credentials/validate` → `records.validate_credentials()`
    (a `list_projects(max_results=1)` call), so a typo is caught at entry rather
    than on first fetch.
 
@@ -97,7 +96,7 @@ is cleared after saving; a reload in the same tab keeps them, a new tab does not
 
 ## Phase 3 — Read-only browsing
 
-1. `ena_service.list_records(creds, entity, *, test, max_results)` wrapping
+1. `records.list_records(creds, entity, *, test, max_results)` wrapping
    `WebinClient.reports.list_*`. Entity → method map, `studies → list_projects`.
    Return plain dicts (`model_dump()`), not models — the grid wants JSON.
 2. `GET /api/records/<entity>` → `{rows: [...]}`, with a per-request client
@@ -159,7 +158,7 @@ changes the grid's editability and nothing else.
    `getChangeSet().rows.length > 0` (listen to `ena-browser:change`); it shows
    a diff preview — accession, field, before → after — before submitting.
 3. `POST /api/records/modify` with `{entity, records: [...], test}`. Delegate
-   to `ena_service.modify_records()`, which calls
+   to `records.modify_records()`, which calls
    `submit_study.submit_batch(..., resubmit_with_modify=True)` /
    `submit_sample.submit_batch(...)`. Do not build XML here.
 4. On success: `clearChanges()`, then re-fetch so the grid shows ENA's state
@@ -173,7 +172,7 @@ replaces the whole object, and the Reports API returns only alias, accession,
 title and status — so *any* submission built from a report row deletes a
 study's description and a sample's attributes, studies and samples included.
 
-`ena_service.modify_records()` therefore fetches each record's current XML from
+`records.modify_records()` therefore fetches each record's current XML from
 the ENA Browser API with the user's Webin credentials, patches the edited
 fields into it, and submits that. A record whose XML cannot be fetched is
 reported as failed and never submitted. One generic path covers every entity,
@@ -182,7 +181,7 @@ scratch, which is right for a new submission and wrong for editing one field of
 an existing one.
 
 What that costs: the editable set is per-entity and small (`_EDITABLE` in
-`ena_service.py`) — alias and title for studies, samples, experiments and
+`ena-submission-toolkit`'s `records.py`) — alias and title for studies, samples, experiments and
 analyses; alias only for runs; nothing for files. Widening it means adding a
 field-to-XML entry and a test, not new machinery.
 

@@ -26,6 +26,14 @@ pytestmark = pytest.mark.skipif(
     not BUNDLE.is_file(), reason="ena-browser bundle not vendored — run `task vendor` (or `task vendor:local`)"
 )
 
+MANIFEST_XML = (
+    '<?xml version="1.0" encoding="UTF-8"?>'
+    '<WEBIN><SUBMISSION_SET><SUBMISSION alias="ena-browser-ui-modify">'
+    "<ACTIONS><ACTION><MODIFY/></ACTION></ACTIONS></SUBMISSION></SUBMISSION_SET>"
+    '<PROJECT_SET><PROJECT accession="PRJEB1" alias="study-one">'
+    "<TITLE>Renamed study</TITLE></PROJECT></PROJECT_SET></WEBIN>"
+)
+
 ROWS = {
     "studies": [
         {"accession": "PRJEB1", "alias": "study-one", "title": "First study", "status": "PRIVATE"},
@@ -33,6 +41,11 @@ ROWS = {
     ],
     "samples": [{"accession": "ERS1", "alias": "sample-one", "title": "A sample", "status": "PRIVATE"}],
 }
+
+
+#: What the record XML carries but the Reports API does not — what
+#: /api/records/<entity>/fields answers with.
+FIELDS = {"PRJEB1": {"alias": "study-one", "title": "First study"}}
 
 
 def _free_port() -> int:
@@ -71,23 +84,72 @@ def app_url() -> str:
 def app(page, app_url):
     """The page with the ENA-facing endpoints stubbed and credentials set."""
     calls: list[str] = []
+    urls: list[str] = []
 
     def records(route, request):
-        entity = request.url.rsplit("/", 1)[-1]
+        # The fetch criteria ride along as a query string.
+        entity = request.url.rsplit("/", 1)[-1].split("?")[0]
         calls.append(entity)
+        urls.append(request.url)
         route.fulfill(
             status=200,
             content_type="application/json",
             body=json.dumps({"rows": ROWS.get(entity, []), "editable_columns": ["alias", "title"]}),
         )
 
+    def fields(route, request):
+        calls.append("fields")
+        route.fulfill(
+            status=200,
+            content_type="application/json",
+            body=json.dumps({"fields": FIELDS}),
+        )
+
     page.route("**/api/records/*", records)
+    page.route("**/api/records/*/fields", fields)
+    page.route(
+        "**/api/records/modify/preview",
+        lambda route: route.fulfill(
+            status=200,
+            content_type="application/json",
+            body=json.dumps(
+                {
+                    "success": True,
+                    "results": [
+                        {
+                            "accession": "PRJEB1",
+                            "changes": {"title": "Renamed study"},
+                            "success": True,
+                            "messages": [],
+                            "xml": MANIFEST_XML,
+                        }
+                    ],
+                }
+            ),
+        ),
+    )
     page.route(
         "**/api/records/modify",
         lambda route: route.fulfill(
             status=200,
             content_type="application/json",
-            body=json.dumps({"success": True, "results": [{"accession": "PRJEB1", "success": True, "messages": []}]}),
+            body=json.dumps(
+                {
+                    "success": True,
+                    "results": [
+                        {
+                            "accession": "PRJEB1",
+                            "changes": {"title": "Renamed study"},
+                            "success": True,
+                            "messages": ["INFO: study updated"],
+                            "info": ["INFO: study updated"],
+                            "warnings": [],
+                            "errors": [],
+                            "xml": MANIFEST_XML,
+                        }
+                    ],
+                }
+            ),
         ),
     )
     page.goto(app_url)
@@ -97,6 +159,7 @@ def app(page, app_url):
     page.goto(app_url)
     page.wait_for_function("() => document.getElementById('rowCount').textContent.includes('records')")
     page.calls = calls  # type: ignore[attr-defined]
+    page.urls = urls  # type: ignore[attr-defined]
     return page
 
 
@@ -133,6 +196,28 @@ def test_switching_tab_fetches_the_other_entity(app):
     assert app.calls[-1] == "samples"
 
 
+def test_criteria_ride_along_with_the_fetch(app):
+    """The search bars are criteria on the request, not the grid's own filters."""
+    app.fill("#qSearch", "gut metagenome")
+    app.fill("#qLinked", "PRJEB1234")
+    app.press("#qSearch", "Enter")
+    app.wait_for_function("() => document.getElementById('rowCount').textContent.includes('matching')")
+    assert "search=gut+metagenome" in app.urls[-1]
+    assert "linked_to=PRJEB1234" in app.urls[-1]
+
+    app.click("#qClear")
+    app.wait_for_function("() => !document.getElementById('rowCount').textContent.includes('matching')")
+    assert "?" not in app.urls[-1]
+
+
+def test_criteria_survive_a_tab_change(app):
+    app.check("#qUnlinked")
+    app.wait_for_function("() => document.getElementById('rowCount').textContent.includes('matching')")
+    app.click("#tabs button[data-entity='samples']")
+    app.wait_for_function("() => document.getElementById('grid').getRows().length === 1")
+    assert app.urls[-1].endswith("/api/records/samples?unlinked=true")
+
+
 # --- the read/write gate ----------------------------------------------------
 
 
@@ -143,16 +228,19 @@ def test_read_only_is_the_default_and_submit_is_disabled(app):
 
 
 def test_write_mode_unlocks_editing_and_row_actions(app):
-    app.on("dialog", lambda dialog: dialog.accept())
-    app.click("#writeToggle")
-    assert app.evaluate("() => document.getElementById('grid').config.mode") == "edit"
+    enable_write_mode(app)
     assert app.evaluate("() => document.getElementById('grid').config.rowActions.length") == 4
     assert "Write mode — TEST" in app.locator("#banner").text_content()
 
 
+def test_write_mode_fetches_the_fields_only_the_record_xml_has(app):
+    assert "fields" not in app.calls  # read-only browsing pays nothing for them
+    enable_write_mode(app)
+    assert app.calls[-1] == "fields"
+
+
 def test_write_mode_is_not_remembered_across_a_reload(app):
-    app.on("dialog", lambda dialog: dialog.accept())
-    app.click("#writeToggle")
+    enable_write_mode(app)
     app.reload()
     app.wait_for_function("() => document.getElementById('rowCount').textContent.includes('records')")
     assert app.locator("#writeToggle").is_checked() is False
@@ -233,6 +321,9 @@ def test_loading_an_entity_starts_a_fresh_history(app):
 def enable_write_mode(page):
     page.on("dialog", lambda dialog: dialog.accept())
     page.click("#writeToggle")
+    # Entering write mode re-reads the rows, this time with the fields that
+    # only exist in the record XML; the grid flips to "edit" when that lands.
+    page.wait_for_function("() => document.getElementById('grid').config.mode === 'edit'")
 
 
 def edit_cell(page, current, new):
@@ -243,10 +334,52 @@ def edit_cell(page, current, new):
     page.keyboard.press("Enter")
 
 
+def generate_manifests(page):
+    page.wait_for_function("() => !document.getElementById('generate').disabled")
+    page.click("#generate")
+    page.wait_for_function("() => !document.getElementById('submit').disabled")
+
+
+def test_a_staged_edit_cannot_be_submitted_until_its_manifest_is_built(app):
+    enable_write_mode(app)
+    edit_cell(app, "First study", "Renamed study")
+    app.wait_for_function("() => !document.getElementById('generate').disabled")
+    # The whole point: an edit alone does not unlock submission.
+    assert app.locator("#submit").is_disabled()
+    assert "no manifests for these edits yet" in app.locator("#manifestState").text_content()
+
+    app.click("#generate")
+    app.wait_for_function("() => !document.getElementById('submit').disabled")
+    assert "PRJEB1" in app.locator("#manifests").text_content()
+    assert "MODIFY" in app.locator("#manifests pre").text_content()
+
+
+def test_editing_again_re_locks_submission(app):
+    enable_write_mode(app)
+    edit_cell(app, "First study", "Renamed study")
+    generate_manifests(app)
+    edit_cell(app, "Second study", "Renamed again")
+    app.wait_for_function("() => document.getElementById('submit').disabled")
+    assert "no manifests for these edits yet" in app.locator("#manifestState").text_content()
+
+
+def test_a_submission_is_logged_verbatim_with_what_ena_said(app):
+    enable_write_mode(app)
+    edit_cell(app, "First study", "Renamed study")
+    generate_manifests(app)
+    app.click("#submit")
+    app.click("#diffDialog button[value='ok']")
+    app.wait_for_function("() => document.getElementById('log').children.length === 1")
+    log = app.locator("#log").text_content()
+    assert "PRJEB1" in log and "accepted" in log
+    assert "INFO: study updated" in log
+    assert "byte-for-byte the manifest reviewed" in log
+
+
 def test_an_edit_is_staged_shown_as_a_diff_and_submitted(app):
     enable_write_mode(app)
     edit_cell(app, "First study", "Renamed study")
-    app.wait_for_function("() => !document.getElementById('submit').disabled")
+    generate_manifests(app)
 
     app.click("#submit")
     assert app.locator("#diffDialog").is_visible()
@@ -265,7 +398,7 @@ def test_cancelling_the_diff_dialog_submits_nothing(app):
     app.route("**/api/records/modify", lambda route: submitted.append(route.request.url))
     enable_write_mode(app)
     edit_cell(app, "First study", "Renamed study")
-    app.wait_for_function("() => !document.getElementById('submit').disabled")
+    generate_manifests(app)
     app.click("#submit")
     app.click("#diffDialog button[value='cancel']")
     app.wait_for_timeout(300)
@@ -276,7 +409,7 @@ def test_cancelling_the_diff_dialog_submits_nothing(app):
 def test_undo_takes_back_a_staged_edit(app):
     enable_write_mode(app)
     edit_cell(app, "First study", "Renamed study")
-    app.wait_for_function("() => !document.getElementById('submit').disabled")
+    generate_manifests(app)
 
     app.click("#undo")
     assert app.evaluate("() => document.getElementById('grid').getChangeSet().rows.length") == 0
@@ -284,4 +417,5 @@ def test_undo_takes_back_a_staged_edit(app):
 
     app.click("#redo")
     assert app.evaluate("() => document.getElementById('grid').getChangeSet().rows.length") == 1
-    assert app.locator("#submit").is_enabled()
+    # Back to the edit the manifests were built from, so submission unlocks again.
+    app.wait_for_function("() => !document.getElementById('submit').disabled")

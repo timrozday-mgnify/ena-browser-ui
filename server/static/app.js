@@ -50,6 +50,12 @@ function clearBanner() { $("banner").className = "banner"; }
 
 function envLabel() { return TEST ? "TEST" : "PRODUCTION"; }
 
+// Record text comes from ENA, and manifests are XML — neither is safe to
+// drop into innerHTML raw.
+function esc(value) {
+  return String(value ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+}
+
 function reflectEnv() {
   const pill = $("envPill");
   pill.textContent = envLabel();
@@ -112,7 +118,10 @@ $("writeToggle").onchange = (event) => {
   }
   WRITE = event.target.checked;
   reflectWriteMode();
-  applyMode();
+  // Entering write mode needs a reload, not just a mode switch: the fields
+  // that only exist in the record XML are fetched with the rows.
+  if (WRITE) loadEntity();
+  else applyMode();
 };
 
 $("credToggle").onclick = () => { $("credPanel").hidden = !$("credPanel").hidden; };

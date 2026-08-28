@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 
-import ena_service
 import pytest
 from conftest import HEADERS
 from lxml import etree
@@ -49,6 +48,51 @@ def test_studies_are_listed_from_the_projects_report(client, ena):
     assert ena.reports.calls[0][0] == "projects"
 
 
+def test_search_filters_the_rows_without_asking_ena_to(client, ena):
+    """ENA has no search parameter — the criteria are applied over the rows."""
+    assert client.get("/api/records/studies?search=old+title", **HEADERS).json()["rows"]
+    assert client.get("/api/records/studies?search=nothing+like+it", **HEADERS).json()["rows"] == []
+
+
+def test_lineage_criteria_reach_the_library(client, ena):
+    # The fake account holds one record that nothing else points at.
+    assert client.get("/api/records/studies?unlinked=true", **HEADERS).json()["rows"]
+    assert client.get("/api/records/studies?linked_to=PRJEB999", **HEADERS).json()["rows"] == []
+    assert ("experiments", 5000) in ena.reports.calls
+
+
+def test_no_criteria_costs_no_lineage_lookup(client, ena):
+    client.get("/api/records/studies", **HEADERS)
+    assert [name for name, _ in ena.reports.calls] == ["projects"]
+
+
+def test_read_rows_carry_their_processing_status(client, ena):
+    body = client.get("/api/records/runs", **HEADERS).json()
+    assert ("run-process", 5000) in ena.reports.calls
+    # the fake report row is PRJEB1, not ERR1 — a run the report says nothing
+    # about must not acquire someone else's status
+    assert "process_status" not in body["rows"][0]
+
+
+def test_editable_fields_are_read_from_the_record_xml(client, ena, record_xml):
+    record_xml["xml"] = b'<RUN_SET><RUN alias="run-a" accession="ERR1"><TITLE>A title</TITLE></RUN></RUN_SET>'
+    body = post(client, "/api/records/runs/fields", {"accessions": ["ERR1"]}, **HEADERS).json()
+    assert body["fields"]["ERR1"] == {"alias": "run-a", "title": "A title"}
+    assert ena.browser.state["fetched"] == ["ERR1"]
+
+
+def test_editable_fields_are_a_read_not_a_write(client, ena, settings, record_xml):
+    settings.READONLY = True
+    record_xml["xml"] = b'<RUN_SET><RUN alias="run-a" accession="ERR1"/></RUN_SET>'
+    assert post(client, "/api/records/runs/fields", {"accessions": ["ERR1"]}, **HEADERS).status_code == 200
+
+
+def test_editable_fields_needs_an_accession_list(client, ena):
+    response = post(client, "/api/records/runs/fields", {}, **HEADERS)
+    assert response.status_code == 400
+    assert "accessions" in response.json()["detail"]
+
+
 def test_unknown_entity_is_a_400_not_a_crash(client, ena):
     response = client.get("/api/records/plasmids", **HEADERS)
     assert response.status_code == 400
@@ -67,6 +111,10 @@ def test_the_test_flag_chooses_the_ena_environment(client, ena):
     "path,payload",
     [
         ("/api/records/modify", {"entity": "studies", "records": [{"accession": "PRJEB1", "changes": {"title": "x"}}]}),
+        (
+            "/api/records/modify/preview",
+            {"entity": "studies", "records": [{"accession": "PRJEB1", "changes": {"title": "x"}}]},
+        ),
         ("/api/records/action", {"accession": "PRJEB1", "action": "cancel"}),
     ],
 )
@@ -107,6 +155,8 @@ def test_modify_patches_the_fetched_xml_and_keeps_everything_else(client, ena, r
     # must survive the round trip instead of being dropped.
     assert project.findtext("DESCRIPTION") == "a description the Reports API never returns"
     assert project.findtext("NAME") == "a name"
+    # and the caller is told exactly what went out, not just that it worked
+    assert body["results"][0]["xml"].encode() == ena.submit.documents[0]
 
 
 def test_a_non_editable_field_is_refused_without_submitting(client, ena, record_xml, writable):
@@ -151,6 +201,42 @@ def test_an_empty_change_set_is_rejected(client, ena, writable):
     assert post(client, "/api/records/modify", {"entity": "studies", "records": []}, **HEADERS).status_code == 400
 
 
+# --- the manifest preview ---------------------------------------------------
+
+
+def preview(client, changes, entity="studies", accession="PRJEB1"):
+    return post(
+        client,
+        "/api/records/modify/preview",
+        {"entity": entity, "records": [{"accession": accession, "changes": changes}]},
+        **HEADERS,
+    )
+
+
+def test_preview_returns_the_document_it_would_submit_and_sends_nothing(client, ena, record_xml, writable):
+    body = preview(client, {"title": "new title"}).json()
+    assert body["success"] is True
+    assert ena.submit.documents == []  # inspected, not submitted
+
+    manifest = body["results"][0]["xml"]
+    assert etree.fromstring(manifest.encode()).find(".//ACTIONS/ACTION/MODIFY") is not None
+    modify(client, {"title": "new title"})
+    assert ena.submit.documents[0] == manifest.encode()
+
+
+def test_preview_reports_a_manifest_it_cannot_build(client, ena, record_xml, writable):
+    body = preview(client, {"status": "PUBLIC"}).json()
+    assert body["success"] is False
+    assert "not editable" in body["results"][0]["messages"][0]
+    assert body["results"][0]["xml"] == ""
+    assert ena.submit.documents == []
+
+
+def test_an_empty_preview_is_rejected(client, ena, writable):
+    response = post(client, "/api/records/modify/preview", {"entity": "studies", "records": []}, **HEADERS)
+    assert response.status_code == 400
+
+
 # --- lifecycle actions ------------------------------------------------------
 
 
@@ -192,10 +278,7 @@ def test_unknown_actions_and_junk_accessions_are_refused(client, ena, writable, 
     assert ena.submit.calls == []
 
 
-# --- the service's own guards ----------------------------------------------
-
-
-def test_accessions_are_sanity_checked_before_they_reach_a_url():
-    creds = ena_service.Credentials("Webin-1", "secret")
-    with pytest.raises(ValueError):
-        ena_service._record_xml(creds, "../../etc/passwd", test=True)
+# NOTE: the ENA service itself (listing, MODIFY-by-XML-patch, lifecycle
+# actions, accession sanity checks) is tested in ena-submission-toolkit and
+# ena-api-client. What is left to test here is this app's HTTP layer: the
+# write lock, the action allow-list, and the error-to-status-code mapping.
