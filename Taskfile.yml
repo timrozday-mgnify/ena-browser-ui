@@ -39,9 +39,11 @@ tasks:
 
   vendor:local:
     desc: >
-      Copy the bundle from a local ../ena-browser checkout's dist/ instead of a
-      release. For working against an untagged element — do not ship this state.
+      Build a local ../ena-browser checkout and copy its dist/ over the
+      vendored bundle, instead of a release. For working against an untagged
+      element — do not ship this state.
     cmds:
+      - npm --prefix ../ena-browser run build
       - mkdir -p server/static/vendor/ena-browser
       - cp ../ena-browser/dist/ena-browser.iife.js ../ena-browser/dist/ena-browser.css server/static/vendor/ena-browser/
 
