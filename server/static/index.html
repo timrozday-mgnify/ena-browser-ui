@@ -153,6 +153,22 @@
     <div id="manifests"></div>
   </section>
 
+  <section class="panel" id="historyPanel">
+    <div class="head">
+      <h2>Change history</h2>
+      <span id="historyCount" class="muted"></span>
+      <span class="muted">every change ENA accepted from this browser — click one to see it, revert it to put the record back</span>
+      <span class="spacer" style="flex:1"></span>
+      <button class="secondary" id="historyClear">Forget</button>
+    </div>
+    <p id="historyEmpty" class="empty">
+      No accepted changes yet. Each one lands here as a stack entry: the fields it changed, the
+      document that was sent, and the manifest that would undo it. Reverting submits that undo as a
+      fresh MODIFY, built from the record as ENA holds it now.
+    </p>
+    <div id="history"></div>
+  </section>
+
   <section class="panel" id="logPanel">
     <div class="head">
       <h2>Submission log</h2>
@@ -184,5 +200,6 @@
 <script src="/static/state.js"></script>
 <script src="/static/undo.js"></script>
 <script src="/static/records.js"></script>
+<script src="/static/history.js"></script>
 </body>
 </html>
