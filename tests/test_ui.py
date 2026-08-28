@@ -15,6 +15,7 @@ import os
 import pathlib
 import socket
 import subprocess
+import sys
 import time
 
 import pytest
@@ -25,6 +26,20 @@ BUNDLE = ROOT / "server" / "static" / "vendor" / "ena-browser" / "ena-browser.ii
 pytestmark = pytest.mark.skipif(
     not BUNDLE.is_file(), reason="ena-browser bundle not vendored — run `task vendor` (or `task vendor:local`)"
 )
+
+#: The fetch has landed and the grid holds it.
+#:
+#: Deliberately not a predicate on `#rowCount`'s text. The page's initial
+#: markup says "no records loaded", and the filter-change handler writes
+#: "0 of 0 records from TEST" the moment the grid mounts empty — so every
+#: substring of a loaded message is already on screen before anything is
+#: fetched, and a test racing it pins nothing and asserts on an empty grid.
+#: The rows are the thing being waited for, so wait for the rows. Every
+#: caller loads an entity the stub answers with rows for.
+LOADED = """() => {
+    const grid = document.getElementById('grid');
+    return !!grid && typeof grid.getRows === 'function' && grid.getRows().length > 0;
+}"""
 
 MANIFEST_XML = (
     '<?xml version="1.0" encoding="UTF-8"?>'
@@ -59,7 +74,9 @@ def app_url() -> str:
     port = _free_port()
     env = {**os.environ, "PYTHONPATH": "server", "ENA_BROWSER_READONLY": "false"}
     process = subprocess.Popen(
-        [str(ROOT / ".venv" / "bin" / "python"), "manage.py", "runserver", f"127.0.0.1:{port}", "--noreload"],
+        # The interpreter running the tests, not a hard-coded `.venv`: CI
+        # installs into the job's own environment and has no `.venv` to find.
+        [sys.executable, "manage.py", "runserver", f"127.0.0.1:{port}", "--noreload"],
         cwd=ROOT,
         env=env,
         stdout=subprocess.DEVNULL,
@@ -157,7 +174,7 @@ def app(page, app_url):
         "() => sessionStorage.setItem('ena-browser-ui.creds', JSON.stringify({username:'Webin-1', password:'x'}))"
     )
     page.goto(app_url)
-    page.wait_for_function("() => document.getElementById('rowCount').textContent.includes('records')")
+    page.wait_for_function(LOADED)
     page.calls = calls  # type: ignore[attr-defined]
     page.urls = urls  # type: ignore[attr-defined]
     return page
@@ -188,6 +205,31 @@ def test_without_credentials_the_page_asks_for_them(page, app_url):
 def test_records_load_and_are_counted(app):
     assert app.evaluate("() => document.getElementById('grid').getRows().length") == 2
     assert "2 records from TEST" in app.locator("#rowCount").text_content()
+
+
+def test_browsing_all_of_ena_switches_source_and_drops_the_other_criteria(app):
+    """The Portal API resolves the relationship itself and knows only public
+    data, so the criteria it cannot answer are disabled rather than sent."""
+    app.fill("#qSearch", "gut metagenome")
+    app.select_option("#qSource", "ena")
+    app.fill("#qLinked", "PRJEB1787")
+    app.press("#qLinked", "Enter")
+    app.wait_for_function("() => document.getElementById('rowCount').textContent.includes('from ENA')")
+
+    assert "source=ena" in app.urls[-1]
+    assert "linked_to=PRJEB1787" in app.urls[-1]
+    assert "search=" not in app.urls[-1]
+    for selector in ("#qSearch", "#qUnlinked", "#qStatus", "#qFullFields"):
+        assert app.locator(selector).is_disabled(), selector
+
+
+def test_public_records_are_never_editable(app):
+    """ENA would refuse a MODIFY of a record this account does not own, so
+    write mode must not offer the edit while browsing them."""
+    enable_write_mode(app)
+    app.select_option("#qSource", "ena")
+    app.wait_for_function("() => document.getElementById('grid').config.mode === 'read'")
+    assert app.evaluate("() => document.getElementById('grid').config.rowActions.length") == 0
 
 
 def test_switching_tab_fetches_the_other_entity(app):
@@ -242,7 +284,7 @@ def test_write_mode_fetches_the_fields_only_the_record_xml_has(app):
 def test_write_mode_is_not_remembered_across_a_reload(app):
     enable_write_mode(app)
     app.reload()
-    app.wait_for_function("() => document.getElementById('rowCount').textContent.includes('records')")
+    app.wait_for_function(LOADED)
     assert app.locator("#writeToggle").is_checked() is False
     assert app.evaluate("() => document.getElementById('grid').config.mode") == "read"
 
@@ -265,7 +307,7 @@ def test_layout_survives_a_reload_but_rows_are_refetched(app):
     app.wait_for_timeout(600)  # the debounced save
     before = len(app.calls)
     app.reload()
-    app.wait_for_function("() => document.getElementById('rowCount').textContent.includes('records')")
+    app.wait_for_function(LOADED)
     assert state(app, "s => s.layout.pinned") == ["accession"]
     assert len(app.calls) > before  # re-fetched, not restored from storage
 

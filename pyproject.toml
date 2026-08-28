@@ -14,7 +14,10 @@ dependencies = [
 
     # Pinned sibling packages. Bump the tag when a sibling repo cuts a release.
     "ena-api-client @ git+https://github.com/timrozday-mgnify/ena-api-client.git@v0.1.2",
-    "ena-submission-toolkit @ git+https://github.com/timrozday-mgnify/ena-submission-toolkit.git@v0.1.2",
+    # TODO: back to a tag once ena-submission-toolkit cuts the release carrying
+    # `portal`. Pinned to the branch meanwhile because this app imports it, and
+    # v0.1.2 predates it — see the PR this comment arrived with.
+    "ena-submission-toolkit @ git+https://github.com/timrozday-mgnify/ena-submission-toolkit.git@feat/portal-api-public-records",
 ]
 
 [project.optional-dependencies]
