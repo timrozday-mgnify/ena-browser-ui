@@ -27,6 +27,12 @@ pytestmark = pytest.mark.skipif(
     not BUNDLE.is_file(), reason="ena-browser bundle not vendored — run `task vendor` (or `task vendor:local`)"
 )
 
+#: The fetch has landed. Deliberately not `includes("records")`: the page's
+#: own initial markup says "no records loaded", so that predicate is true
+#: before anything is fetched and a test racing it sees an empty grid. Every
+#: loaded message — from a Webin environment or from ENA — says "records from".
+LOADED = "() => document.getElementById('rowCount').textContent.includes('records from')"
+
 MANIFEST_XML = (
     '<?xml version="1.0" encoding="UTF-8"?>'
     '<WEBIN><SUBMISSION_SET><SUBMISSION alias="ena-browser-ui-modify">'
@@ -160,7 +166,7 @@ def app(page, app_url):
         "() => sessionStorage.setItem('ena-browser-ui.creds', JSON.stringify({username:'Webin-1', password:'x'}))"
     )
     page.goto(app_url)
-    page.wait_for_function("() => document.getElementById('rowCount').textContent.includes('records')")
+    page.wait_for_function(LOADED)
     page.calls = calls  # type: ignore[attr-defined]
     page.urls = urls  # type: ignore[attr-defined]
     return page
@@ -270,7 +276,7 @@ def test_write_mode_fetches_the_fields_only_the_record_xml_has(app):
 def test_write_mode_is_not_remembered_across_a_reload(app):
     enable_write_mode(app)
     app.reload()
-    app.wait_for_function("() => document.getElementById('rowCount').textContent.includes('records')")
+    app.wait_for_function(LOADED)
     assert app.locator("#writeToggle").is_checked() is False
     assert app.evaluate("() => document.getElementById('grid').config.mode") == "read"
 
@@ -293,7 +299,7 @@ def test_layout_survives_a_reload_but_rows_are_refetched(app):
     app.wait_for_timeout(600)  # the debounced save
     before = len(app.calls)
     app.reload()
-    app.wait_for_function("() => document.getElementById('rowCount').textContent.includes('records')")
+    app.wait_for_function(LOADED)
     assert state(app, "s => s.layout.pinned") == ["accession"]
     assert len(app.calls) > before  # re-fetched, not restored from storage
 
