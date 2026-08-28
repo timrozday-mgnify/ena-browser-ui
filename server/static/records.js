@@ -277,7 +277,14 @@ async function loadEntity() {
     return;
   }
   $("rowCount").textContent = "loading…";
-  grid.applyConfig({ entity: ENTITY, mode: "read", rowActions: WRITE ? ROW_ACTIONS : [] });
+  // `!browsingEna()` matters here as much as in applyMode: this runs while the
+  // fetch is in flight, so without it a slow load leaves release/hold/suppress
+  // /cancel clickable on records the account does not own.
+  grid.applyConfig({
+    entity: ENTITY,
+    mode: "read",
+    rowActions: WRITE && !browsingEna() ? ROW_ACTIONS : [],
+  });
   try {
     const query = criteriaQuery();
     const body = await api(`/api/records/${ENTITY}${query ? `?${query}` : ""}`);

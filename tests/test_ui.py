@@ -27,11 +27,19 @@ pytestmark = pytest.mark.skipif(
     not BUNDLE.is_file(), reason="ena-browser bundle not vendored — run `task vendor` (or `task vendor:local`)"
 )
 
-#: The fetch has landed. Deliberately not `includes("records")`: the page's
-#: own initial markup says "no records loaded", so that predicate is true
-#: before anything is fetched and a test racing it sees an empty grid. Every
-#: loaded message — from a Webin environment or from ENA — says "records from".
-LOADED = "() => document.getElementById('rowCount').textContent.includes('records from')"
+#: The fetch has landed and the grid holds it.
+#:
+#: Deliberately not a predicate on `#rowCount`'s text. The page's initial
+#: markup says "no records loaded", and the filter-change handler writes
+#: "0 of 0 records from TEST" the moment the grid mounts empty — so every
+#: substring of a loaded message is already on screen before anything is
+#: fetched, and a test racing it pins nothing and asserts on an empty grid.
+#: The rows are the thing being waited for, so wait for the rows. Every
+#: caller loads an entity the stub answers with rows for.
+LOADED = """() => {
+    const grid = document.getElementById('grid');
+    return !!grid && typeof grid.getRows === 'function' && grid.getRows().length > 0;
+}"""
 
 MANIFEST_XML = (
     '<?xml version="1.0" encoding="UTF-8"?>'
