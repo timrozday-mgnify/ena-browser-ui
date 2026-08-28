@@ -15,6 +15,7 @@ import os
 import pathlib
 import socket
 import subprocess
+import sys
 import time
 
 import pytest
@@ -59,7 +60,9 @@ def app_url() -> str:
     port = _free_port()
     env = {**os.environ, "PYTHONPATH": "server", "ENA_BROWSER_READONLY": "false"}
     process = subprocess.Popen(
-        [str(ROOT / ".venv" / "bin" / "python"), "manage.py", "runserver", f"127.0.0.1:{port}", "--noreload"],
+        # The interpreter running the tests, not a hard-coded `.venv`: CI
+        # installs into the job's own environment and has no `.venv` to find.
+        [sys.executable, "manage.py", "runserver", f"127.0.0.1:{port}", "--noreload"],
         cwd=ROOT,
         env=env,
         stdout=subprocess.DEVNULL,
