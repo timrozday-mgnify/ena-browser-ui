@@ -6,7 +6,7 @@ import contextlib
 from typing import Any
 
 import pytest
-from ena_submission_toolkit import records
+from ena_submission_toolkit import portal, records
 
 STUDY_XML = b"""<?xml version="1.0" encoding="UTF-8"?>
 <PROJECT_SET>
@@ -148,6 +148,25 @@ def ena(monkeypatch: pytest.MonkeyPatch) -> FakeClient:
 
     monkeypatch.setattr(records, "webin_client", fake_webin_client)
     return client
+
+
+@pytest.fixture
+def ena_portal(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
+    """Replace the Portal API with a fake, so nothing leaves the process.
+
+    ``state["rows"]`` is what a public search answers with; ``state["calls"]``
+    records what was asked. Set ``state["error"]`` to make it fail.
+    """
+    state: dict[str, Any] = {"rows": [], "calls": [], "error": None}
+
+    def fake_search_public(entity, linked_to, *, username="", password=""):
+        state["calls"].append((entity, linked_to, username))
+        if state["error"] is not None:
+            raise state["error"]
+        return list(state["rows"])
+
+    monkeypatch.setattr(portal, "search_public", fake_search_public)
+    return state
 
 
 @pytest.fixture

@@ -14,7 +14,7 @@ from typing import Any
 import webin_creds
 from django.conf import settings
 from django.http import HttpRequest, HttpResponseNotAllowed, JsonResponse
-from ena_submission_toolkit import records
+from ena_submission_toolkit import portal, records
 
 #: The lifecycle actions this app offers. ``records.ACTIONS`` also has ``kill``
 #: — irreversible and admin-only, deliberately not reachable from here.
@@ -91,15 +91,44 @@ def _criteria(request: HttpRequest) -> dict[str, Any]:
         "search": query.get("search", "").strip(),
         "linked_to": query.get("linked_to", "").strip(),
         "unlinked": query.get("unlinked") == "true",
+        # On unless asked otherwise: the grid hides these columns by default,
+        # so the only cost of having them is a slower fetch.
+        "full_fields": query.get("full_fields") != "false",
     }
 
 
 def records_list(request: HttpRequest, entity: str) -> JsonResponse | HttpResponseNotAllowed:
+    """List records, from the Webin account or from ENA at large.
+
+    ``?source=ena`` switches from the Reports API — everything registered
+    under these credentials, private and public alike — to the Portal API,
+    which is keyed by accession rather than by account and so can reach
+    records this account did not submit. It needs an accession to search
+    from; there is no "list all of ENA".
+
+    Public rows come back with no editable columns: a MODIFY of a record this
+    account does not own would be refused by ENA, and the page should not
+    offer an edit that cannot land.
+    """
     if request.method != "GET":
         return HttpResponseNotAllowed(["GET"])
     creds, test, error = _guard(request)
     if error is not None:
         return error
+
+    if request.GET.get("source") == "ena":
+        linked_to = request.GET.get("linked_to", "").strip()
+        if not linked_to:
+            return JsonResponse(
+                {"detail": "Searching ENA needs an accession to search from — fill in 'linked to'."},
+                status=400,
+            )
+
+        def call_public() -> dict[str, Any]:
+            rows = portal.search_public(entity, linked_to, username=creds.username, password=creds.password)
+            return {"rows": rows, "editable_columns": []}
+
+        return _run(call_public)
 
     def call() -> dict[str, Any]:
         rows = records.list_records(creds, entity, test=test, **_criteria(request))

@@ -54,6 +54,45 @@ def test_search_filters_the_rows_without_asking_ena_to(client, ena):
     assert client.get("/api/records/studies?search=nothing+like+it", **HEADERS).json()["rows"] == []
 
 
+def test_the_account_listing_is_not_private_only(client, ena):
+    """The Reports API is scoped by ownership, not by release status."""
+    statuses = {row["status"] for row in client.get("/api/records/studies", **HEADERS).json()["rows"]}
+    assert {"PRIVATE", "PUBLIC"} & statuses
+
+
+# --- listing: all of ENA ----------------------------------------------------
+
+
+def test_source_ena_searches_the_portal_not_the_reports_api(client, ena, ena_portal):
+    ena_portal["rows"] = [{"run_accession": "ERR1", "instrument_model": "NovaSeq"}]
+    body = client.get("/api/records/runs?source=ena&linked_to=PRJEB1787", **HEADERS).json()
+    assert body["rows"] == ena_portal["rows"]
+    assert ena_portal["calls"] == [("runs", "PRJEB1787", "Webin-1")]
+    # The account's own reports were never asked.
+    assert ena.reports.calls == []
+
+
+def test_public_records_are_never_editable(client, ena, ena_portal):
+    """A MODIFY of a record this account does not own would be refused by ENA."""
+    ena_portal["rows"] = [{"run_accession": "ERR1"}]
+    body = client.get("/api/records/runs?source=ena&linked_to=PRJEB1787", **HEADERS).json()
+    assert body["editable_columns"] == []
+
+
+def test_searching_ena_needs_an_accession(client, ena, ena_portal):
+    response = client.get("/api/records/runs?source=ena", **HEADERS)
+    assert response.status_code == 400
+    assert "accession" in response.json()["detail"]
+    assert ena_portal["calls"] == []
+
+
+def test_a_portal_failure_is_reported_verbatim(client, ena, ena_portal):
+    ena_portal["error"] = ValueError("ENA cannot list studies by 'ERR1'")
+    response = client.get("/api/records/studies?source=ena&linked_to=ERR1", **HEADERS)
+    assert response.status_code == 400
+    assert "ENA cannot list studies" in response.json()["detail"]
+
+
 def test_lineage_criteria_reach_the_library(client, ena):
     # The fake account holds one record that nothing else points at.
     assert client.get("/api/records/studies?unlinked=true", **HEADERS).json()["rows"]

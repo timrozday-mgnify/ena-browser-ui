@@ -19,17 +19,23 @@ let EDITABLE = {};
 
 function editableFor(entity) { return EDITABLE[entity] || []; }
 
-function canEdit() { return WRITE && editableFor(ENTITY).length > 0; }
+/** Records this account did not submit. ENA would refuse a MODIFY of one, so
+ *  the page must not offer the edit — see `applyMode`. */
+function browsingEna() { return $("qSource").value === "ena"; }
+
+function canEdit() { return WRITE && !browsingEna() && editableFor(ENTITY).length > 0; }
 
 function applyMode() {
   if (!canEdit()) clearManifests();
   grid.applyConfig({
     mode: canEdit() ? "edit" : "read",
     editableColumns: editableFor(ENTITY),
-    rowActions: WRITE ? ROW_ACTIONS : [],
+    rowActions: WRITE && !browsingEna() ? ROW_ACTIONS : [],
   });
   refreshSubmitButton();
-  if (WRITE && !canEdit()) {
+  if (WRITE && browsingEna()) {
+    banner("warn", "Write mode, but these are ENA's public records, not yours — nothing here is editable.");
+  } else if (WRITE && !canEdit()) {
     banner("warn", `Write mode — ${envLabel()}. ${ENTITY} cannot be edited here; row actions still apply.`);
   }
 }
@@ -217,9 +223,19 @@ function criteriaQuery() {
   const params = new URLSearchParams();
   const search = $("qSearch").value.trim();
   const linked = $("qLinked").value.trim();
+  // The Portal API resolves the relationship itself and answers about public
+  // data only, so the rest of these have nothing to act on.
+  if (browsingEna()) {
+    params.set("source", "ena");
+    if (linked) params.set("linked_to", linked);
+    return params.toString();
+  }
   if (search) params.set("search", search);
   if (linked) params.set("linked_to", linked);
   if ($("qUnlinked").checked) params.set("unlinked", "true");
+  // Default on: the extra columns arrive hidden, so they cost a slower fetch
+  // and nothing else until someone ticks one on in the Columns menu.
+  if (!$("qFullFields").checked) params.set("full_fields", "false");
   if ($("qStatus").value !== "all") params.set("status", $("qStatus").value);
   return params.toString();
 }
@@ -228,12 +244,28 @@ for (const id of ["qSearch", "qLinked"]) {
   $(id).onkeydown = (event) => { if (event.key === "Enter") loadEntity(); };
 }
 $("qUnlinked").onchange = () => loadEntity();
+$("qFullFields").onchange = () => loadEntity();
 $("qStatus").onchange = () => loadEntity();
+$("qSource").onchange = () => { applyCriteriaSource(); loadEntity(); };
+
+/** Grey out the criteria the current source cannot answer, so "ignored" is
+ *  visible rather than something to discover. */
+function applyCriteriaSource() {
+  const ena = browsingEna();
+  for (const id of ["qSearch", "qUnlinked", "qStatus", "qFullFields"]) $(id).disabled = ena;
+  $("qLinked").placeholder = ena
+    ? "accession to search ENA from, e.g. PRJEB1787"
+    : "linked to accession, e.g. PRJEB1234";
+  applyMode();
+}
 $("qClear").onclick = () => {
   $("qSearch").value = "";
   $("qLinked").value = "";
   $("qUnlinked").checked = false;
+  $("qFullFields").checked = true;
   $("qStatus").value = "all";
+  $("qSource").value = "account";
+  applyCriteriaSource();
   loadEntity();
 };
 
@@ -257,12 +289,16 @@ async function loadEntity() {
     applyMode();
     resetUndo();
     $("rowCount").textContent =
-      `${rows.length} records from ${envLabel()}${query ? " matching the criteria" : ""}`;
+      browsingEna()
+        // The Portal API is the public production index; the TEST/PRODUCTION
+        // switch is a Webin submission environment and does not apply to it.
+        ? `${rows.length} public records from ENA under ${$("qLinked").value.trim()}`
+        : `${rows.length} records from ${envLabel()}${query ? " matching the criteria" : ""}`;
     if (WRITE) reflectWriteMode(); else clearBanner();
   } catch (error) {
     $("rowCount").textContent = "load failed";
     grid.setRows([]);
-    banner("bad", `Could not load ${ENTITY} from ${envLabel()}: ${error.message}`);
+    banner("bad", `Could not load ${ENTITY} from ${browsingEna() ? "ENA" : envLabel()}: ${error.message}`);
   }
 }
 

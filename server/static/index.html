@@ -107,9 +107,14 @@
   <div id="banner" class="banner"></div>
 
   <div class="row" id="criteria">
+    <select id="qSource" title="My Webin account is the Reports API: everything registered under these credentials, private and public. All of ENA is the Portal API: any record, whoever submitted it — it has no listing of its own, so it needs an accession to search from.">
+      <option value="account">my Webin account</option>
+      <option value="ena">all of ENA (read-only)</option>
+    </select>
     <input type="text" id="qSearch" size="26" placeholder="search every column" />
     <input type="text" id="qLinked" size="30" placeholder="linked to accession, e.g. PRJEB1234" />
     <label class="switch"><input type="checkbox" id="qUnlinked" /> unlinked only</label>
+    <label class="switch" title="Also fetch everything the ENA Portal API indexes about these records — around 200 columns instead of five. Start them hidden; tick the ones you want in Columns. Production only, and slower on a large account."><input type="checkbox" id="qFullFields" checked /> all fields</label>
     <select id="qStatus">
       <option value="all">any status</option>
       <option value="PRIVATE">private</option>
