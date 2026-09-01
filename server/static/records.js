@@ -19,17 +19,58 @@ let EDITABLE = {};
 
 function editableFor(entity) { return EDITABLE[entity] || []; }
 
+// --- Checklist attributes ---------------------------------------------------
+// A record's own XML carries the checklist fields — a sample's collection
+// date, host, isolation source — and neither listing API has them, so
+// ena-submission-toolkit merges them into the rows under an `attr:` namespace.
+// That namespace is what makes them usable here: it says which columns are
+// attributes, which is both how they get shown (a data-derived column arrives
+// hidden, and these are the point of the fetch, not incidental extras) and how
+// they get edited (a MODIFY addresses one by its tag).
+const ATTRIBUTE_PREFIX = "attr:";
+
+let ATTRIBUTE_COLUMNS = [];
+
+function attributeColumnsIn(rows) {
+  const names = new Set();
+  for (const row of rows) {
+    for (const name of Object.keys(row)) {
+      if (name.startsWith(ATTRIBUTE_PREFIX)) names.add(name);
+    }
+  }
+  return [...names].sort();
+}
+
+/** Column specs that show the attributes and title them by their tag alone. */
+function attributeColumnSpecs() {
+  return ATTRIBUTE_COLUMNS.map((name) => ({
+    name,
+    title: name.slice(ATTRIBUTE_PREFIX.length),
+    hidden: false,
+  }));
+}
+
 /** Records this account did not submit. ENA would refuse a MODIFY of one, so
  *  the page must not offer the edit — see `applyMode`. */
 function browsingEna() { return $("qSource").value === "ena"; }
 
 function canEdit() { return WRITE && !browsingEna() && editableFor(ENTITY).length > 0; }
 
+/** The fixed editable fields, plus this listing's checklist attributes.
+ *
+ *  The server is the authority on both and refuses anything else: a tag the
+ *  record does not already carry, and ENA's own `ENA-*` bookkeeping tags,
+ *  come back as a failed manifest rather than a submission. */
+function editableColumnsNow() {
+  return canEdit() ? [...editableFor(ENTITY), ...ATTRIBUTE_COLUMNS] : editableFor(ENTITY);
+}
+
 function applyMode() {
   if (!canEdit()) clearManifests();
   grid.applyConfig({
     mode: canEdit() ? "edit" : "read",
-    editableColumns: editableFor(ENTITY),
+    columns: attributeColumnSpecs(),
+    editableColumns: editableColumnsNow(),
     rowActions: WRITE && !browsingEna() ? ROW_ACTIONS : [],
   });
   refreshSubmitButton();
@@ -289,7 +330,13 @@ async function loadEntity() {
     const query = criteriaQuery();
     const body = await api(`/api/records/${ENTITY}${query ? `?${query}` : ""}`);
     let rows = body.rows || [];
+    ATTRIBUTE_COLUMNS = attributeColumnsIn(rows);
     if (canEdit()) rows = await withEditableFields(rows);
+    // Before the rows, not after: a column the grid first meets in the data is
+    // hidden by default, and that decision sticks in its layout. Declaring
+    // these up front is what makes them visible — and a saved layout still
+    // wins, so hiding one stays hidden.
+    grid.applyConfig({ columns: attributeColumnSpecs() });
     applySavedLayout(ENTITY);
     grid.setRows(rows);
     clearManifests();
@@ -313,7 +360,7 @@ async function loadEntity() {
 /** Change set rows -> what /api/records/modify wants, narrowed to editable
  *  fields. The server refuses anything else, but sending it would be a bug. */
 function pendingChanges() {
-  const allowed = new Set(editableFor(ENTITY));
+  const allowed = new Set(editableColumnsNow());
   return grid.getChangeSet().rows
     .map((row) => {
       const changes = {};
