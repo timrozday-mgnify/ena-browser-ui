@@ -389,7 +389,10 @@ def enable_write_mode(page):
 def edit_cell(page, current, new):
     cell = page.locator("ena-browser td", has_text=current).first
     cell.dblclick()
-    page.keyboard.press("Meta+A")
+    # ControlOrMeta, not Meta: the select-all that clears the cell is Cmd+A on
+    # a Mac and Ctrl+A on the Linux runners, and the wrong one types the new
+    # value onto the end of the old one instead of replacing it.
+    page.keyboard.press("ControlOrMeta+A")
     page.keyboard.type(new)
     page.keyboard.press("Enter")
 
