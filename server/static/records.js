@@ -189,13 +189,19 @@ $("logClear").onclick = () => {
 };
 
 // --- Loading ----------------------------------------------------------------
-/** Report rows + the editable fields only the record XML carries.
+/** Report rows + the fields only the record XML carries.
  *
- *  A run's title and an experiment's library/instrument are not in the Reports
- *  API's answer, so without this there would be no cell to edit them in. Only
- *  worth the requests in write mode; a failure here degrades to the report's
- *  own columns rather than losing the grid. */
-async function withEditableFields(rows) {
+ *  Two things neither listing API has: the editable fields (a run's title, an
+ *  experiment's library and instrument), without which there would be no cell
+ *  to edit them in, and the record's checklist attributes as `attr:` columns —
+ *  a sample's collection date, host, isolation source. The Portal API only
+ *  indexes its own fixed field set, so a checklist tag outside it is in the
+ *  record XML and nowhere else.
+ *
+ *  Worth the request in read mode too, which is why this is no longer gated on
+ *  write mode: the attributes are most of what a sample actually says. A
+ *  failure degrades to the report's own columns rather than losing the grid. */
+async function withXmlFields(rows) {
   const accessions = rows.map((row) => row.accession).filter(Boolean);
   if (!accessions.length) return rows;
   try {
@@ -289,7 +295,8 @@ async function loadEntity() {
     const query = criteriaQuery();
     const body = await api(`/api/records/${ENTITY}${query ? `?${query}` : ""}`);
     let rows = body.rows || [];
-    if (canEdit()) rows = await withEditableFields(rows);
+    // Not `canEdit()`: read mode wants the checklist attributes just as much.
+    if (!browsingEna() && editableFor(ENTITY).length) rows = await withXmlFields(rows);
     applySavedLayout(ENTITY);
     grid.setRows(rows);
     clearManifests();

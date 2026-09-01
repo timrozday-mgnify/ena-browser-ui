@@ -138,13 +138,21 @@ def records_list(request: HttpRequest, entity: str) -> JsonResponse | HttpRespon
 
 
 def records_fields(request: HttpRequest, entity: str) -> JsonResponse | HttpResponseNotAllowed:
-    """The current value of every editable field, for the given accessions.
+    """The fields that only the record's XML holds, for the given accessions.
 
-    The Reports API does not return a run's title or an experiment's library
-    and instrument — they live in the record's XML. The grid cannot let anyone
-    edit a field it has never shown them, so the page asks for these once it is
-    in write mode and merges them into the rows it already has. A read, not a
-    write: no write lock, nothing is sent to ENA.
+    Neither listing API answers for these. The Reports API returns five
+    columns per record — not even a run's title, nothing about an experiment's
+    library or instrument. The Portal API adds its own indexed set, but that
+    set is fixed (102 fields for a sample), so a checklist's tags are missing
+    from it whenever the checklist calls something by another name.
+
+    Both live in the record XML, and one fetch gets both: the editable fields,
+    so the grid can show what it is about to let someone edit, and the whole
+    TAG/VALUE attribute list as ``attr:``-prefixed columns. The attribute
+    columns are read-only — they are not in ``editable_columns``, and a MODIFY
+    naming one is refused.
+
+    A read, not a write: no write lock, nothing is sent to ENA.
     """
     if request.method != "POST":
         return HttpResponseNotAllowed(["POST"])
@@ -156,7 +164,7 @@ def records_fields(request: HttpRequest, entity: str) -> JsonResponse | HttpResp
         accessions = _body(request).get("accessions")
         if not isinstance(accessions, list):
             raise ValueError('Expected an "accessions" list')
-        return {"fields": records.read_editable_fields(creds, entity, [str(a) for a in accessions], test=test)}
+        return {"fields": records.read_xml_fields(creds, entity, [str(a) for a in accessions], test=test)}
 
     return _run(call)
 
