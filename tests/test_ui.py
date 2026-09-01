@@ -62,15 +62,7 @@ ROWS = {
 
 #: What the record XML carries but the Reports API does not — what
 #: /api/records/<entity>/fields answers with.
-FIELDS = {
-    "PRJEB1": {
-        "alias": "study-one",
-        "title": "First study",
-        # Only the record XML has these; the listing APIs have neither.
-        "attr:collection date": "2021-03-01",
-        "attr:depth": "10 m",
-    }
-}
+FIELDS = {"PRJEB1": {"alias": "study-one", "title": "First study"}}
 
 
 def _free_port() -> int:
@@ -247,8 +239,7 @@ def test_public_records_are_never_editable(app):
 def test_switching_tab_fetches_the_other_entity(app):
     app.click("#tabs button[data-entity='samples']")
     app.wait_for_function("() => document.getElementById('grid').getRows().length === 1")
-    # The rows, then the fields only their XML has.
-    assert app.calls[-2:] == ["samples", "fields"]
+    assert app.calls[-1] == "samples"
 
 
 def test_criteria_ride_along_with_the_fetch(app):
@@ -288,21 +279,10 @@ def test_write_mode_unlocks_editing_and_row_actions(app):
     assert "Write mode — TEST" in app.locator("#banner").text_content()
 
 
-def test_the_fields_only_the_record_xml_has_are_fetched_in_read_mode_too(app):
-    # Not gated on write mode: a sample's checklist attributes are most of what
-    # it says, and they are in the XML whether or not anyone is editing.
-    assert "fields" in app.calls
-    row = app.evaluate("() => document.getElementById('grid').getRows()[0]")
-    assert row["attr:collection date"] == "2021-03-01"
-    assert row["attr:depth"] == "10 m"
-
-
-def test_the_attribute_columns_are_not_editable(app):
+def test_write_mode_fetches_the_fields_only_the_record_xml_has(app):
+    assert "fields" not in app.calls  # read-only browsing pays nothing for them
     enable_write_mode(app)
     assert app.calls[-1] == "fields"
-    editable = app.evaluate("() => document.getElementById('grid').config.editableColumns")
-    assert editable == ["alias", "title"]
-    assert not any(column.startswith("attr:") for column in editable)
 
 
 def test_write_mode_is_not_remembered_across_a_reload(app):
