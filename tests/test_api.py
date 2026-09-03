@@ -117,7 +117,10 @@ def test_editable_fields_are_read_from_the_record_xml(client, ena, record_xml):
     record_xml["xml"] = b'<RUN_SET><RUN alias="run-a" accession="ERR1"><TITLE>A title</TITLE></RUN></RUN_SET>'
     body = post(client, "/api/records/runs/fields", {"accessions": ["ERR1"]}, **HEADERS).json()
     assert body["fields"]["ERR1"] == {"alias": "run-a", "title": "A title"}
-    assert ena.browser.state["fetched"] == ["ERR1"]
+    assert record_xml["fetched"] == ["ERR1"]
+    # From the account's own copy: the Browser API has no private record to
+    # give, and a submitter's records are private until released.
+    assert record_xml["entities"] == ["runs"]
 
 
 def test_editable_fields_are_a_read_not_a_write(client, ena, settings, record_xml):

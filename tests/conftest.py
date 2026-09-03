@@ -108,30 +108,59 @@ class FakeRunProcess:
         self.error_message = error
 
 
-class FakeBrowser:
-    """The Browser API fetch that modify_records reads before it patches."""
+class FakeRecordXml:
+    """The record XML every read starts from, and who serves it.
+
+    The Reports API is the source now: the Browser API answers 404 for a
+    private record, which is most of a submitter's account. ``owned=False``
+    makes this account own none of them, which is the one case that still
+    falls through to the Browser API — records the Portal listed and this
+    account did not submit.
+    """
 
     def __init__(self) -> None:
-        self.state: dict[str, Any] = {"xml": STUDY_XML, "error": None, "fetched": []}
+        self.state: dict[str, Any] = {
+            "xml": STUDY_XML,
+            "error": None,
+            "fetched": [],
+            "entities": [],
+            "owned": True,
+        }
 
-    def xml(self, accession: str) -> bytes:
-        self.state["fetched"].append(accession)
-        if self.state["error"] is not None:
-            raise self.state["error"]
-        return self.state["xml"]
+    def reports_xml(self, entity: str, accessions: Any) -> bytes:
+        if not self.state["owned"]:
+            raise LookupError("the Webin account holds none of these")
+        self.state["entities"].append(entity)
+        return self._serve(list(accessions))
 
-    def xml_many(self, accessions: list[str]) -> bytes:
+    def _serve(self, accessions: list[str]) -> bytes:
         self.state["fetched"].extend(accessions)
         if self.state["error"] is not None:
             raise self.state["error"]
         return self.state["xml"]
 
 
+class FakeBrowser:
+    """The public fallback: released records this account did not submit."""
+
+    def __init__(self, records_xml: FakeRecordXml) -> None:
+        self._records = records_xml
+        self.state = records_xml.state
+
+    def xml(self, accession: str) -> bytes:
+        return self._records._serve([accession])
+
+    def xml_many(self, accessions: list[str]) -> bytes:
+        return self._records._serve(list(accessions))
+
+
 class FakeClient:
     def __init__(self) -> None:
+        record_xml = FakeRecordXml()
         self.reports = FakeReports()
+        self.reports.xml = record_xml.reports_xml  # type: ignore[method-assign]
         self.submit = FakeSubmit()
-        self.browser = FakeBrowser()
+        self.browser = FakeBrowser(record_xml)
         self.test: bool | None = None
 
 
@@ -171,7 +200,7 @@ def ena_portal(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
 
 @pytest.fixture
 def record_xml(ena: FakeClient) -> dict[str, Any]:
-    """The fake Browser API's state, so a test can swap the XML or fail it."""
+    """What ENA holds for a record, so a test can swap the XML or fail it."""
     return ena.browser.state
 
 
