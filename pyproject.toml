@@ -14,12 +14,7 @@ dependencies = [
 
     # Pinned sibling packages. Bump the tag when a sibling repo cuts a release.
     "ena-api-client @ git+https://github.com/timrozday-mgnify/ena-api-client.git@v0.1.3",
-    # TODO: back to a tag once ena-submission-toolkit tags v0.1.4 — this commit
-    # is what that tag will point at, and nothing older will do: before it, a
-    # record's XML was read from the ENA Browser API, which serves no private
-    # record, so a listing had no checklist attributes and a held record could
-    # not be modified at all.
-    "ena-submission-toolkit @ git+https://github.com/timrozday-mgnify/ena-submission-toolkit.git@67650fbfef4795d7f6774598337c7a510f990e1c",
+    "ena-submission-toolkit @ git+https://github.com/timrozday-mgnify/ena-submission-toolkit.git@v0.1.4",
 ]
 
 [project.optional-dependencies]
