@@ -53,8 +53,22 @@ UNDO_XML = MANIFEST_XML.replace("Renamed study", "First study")
 
 ROWS = {
     "studies": [
-        {"accession": "PRJEB1", "alias": "study-one", "title": "First study", "status": "PRIVATE"},
-        {"accession": "PRJEB2", "alias": "study-two", "title": "Second study", "status": "PUBLIC"},
+        {
+            "accession": "PRJEB1",
+            "alias": "study-one",
+            "title": "First study",
+            "status": "PRIVATE",
+            # Merged in from the record's own XML by ena-submission-toolkit;
+            # the `attr:` namespace is what marks it a checklist attribute.
+            "attr:collection date": "2024-05-01",
+        },
+        {
+            "accession": "PRJEB2",
+            "alias": "study-two",
+            "title": "Second study",
+            "status": "PUBLIC",
+            "attr:collection date": "2024-06-02",
+        },
     ],
     "samples": [{"accession": "ERS1", "alias": "sample-one", "title": "A sample", "status": "PRIVATE"}],
 }
@@ -375,7 +389,10 @@ def enable_write_mode(page):
 def edit_cell(page, current, new):
     cell = page.locator("ena-browser td", has_text=current).first
     cell.dblclick()
-    page.keyboard.press("Meta+A")
+    # ControlOrMeta, not Meta: the select-all that clears the cell is Cmd+A on
+    # a Mac and Ctrl+A on the Linux runners, and the wrong one types the new
+    # value onto the end of the old one instead of replacing it.
+    page.keyboard.press("ControlOrMeta+A")
     page.keyboard.type(new)
     page.keyboard.press("Enter")
 
@@ -550,3 +567,72 @@ def test_reverting_needs_write_mode(app):
     app.click("#history button[data-revert]")
     app.wait_for_function("() => document.getElementById('banner').classList.contains('bad')")
     assert "write mode" in app.locator("#banner").text_content()
+
+
+# --- checklist attributes ---------------------------------------------------
+
+
+def column(page, name):
+    return page.evaluate(
+        "(name) => (document.getElementById('grid').getState().layout.hidden || []).includes(name)",
+        name,
+    )
+
+
+def test_attribute_columns_are_shown_not_hidden_like_other_extras(app):
+    """A data-derived column arrives hidden — right for the Portal's 200 extra
+    fields, wrong for these: they are what the record actually says."""
+    assert column(app, "attr:collection date") is False
+    titles = app.evaluate(
+        "() => document.getElementById('grid').config.columns.filter(c => c.name.startsWith('attr:')).map(c => c.title)"
+    )
+    assert titles == ["collection date"]  # titled by its tag, not its namespace
+
+
+def test_attributes_are_editable_in_write_mode_and_not_before(app):
+    assert "attr:collection date" not in app.evaluate("() => document.getElementById('grid').config.editableColumns")
+    enable_write_mode(app)
+    assert app.evaluate("() => document.getElementById('grid').config.editableColumns") == [
+        "alias",
+        "title",
+        "attr:collection date",
+    ]
+
+
+def test_an_edited_attribute_is_submitted_under_its_tag(app):
+    sent: list[dict] = []
+    app.route(
+        "**/api/records/modify/preview",
+        lambda route: (
+            sent.append(route.request.post_data_json),
+            route.fulfill(
+                status=200,
+                content_type="application/json",
+                body=json.dumps(
+                    {
+                        "success": True,
+                        "results": [
+                            {
+                                "accession": "PRJEB1",
+                                "changes": {"attr:collection date": "2025-01-31"},
+                                "success": True,
+                                "messages": [],
+                                "xml": MANIFEST_XML,
+                                "previous": {"attr:collection date": "2024-05-01"},
+                                "undo_xml": UNDO_XML,
+                            }
+                        ],
+                    }
+                ),
+            ),
+        )[-1],
+    )
+    enable_write_mode(app)
+    edit_cell(app, "2024-05-01", "2025-01-31")
+    generate_manifests(app)
+    assert sent == [
+        {
+            "entity": "studies",
+            "records": [{"accession": "PRJEB1", "changes": {"attr:collection date": "2025-01-31"}}],
+        }
+    ]
