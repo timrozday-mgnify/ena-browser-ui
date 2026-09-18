@@ -49,7 +49,7 @@ jobs:
         run: |
           ref=$(grep -E '^\s+ENA_BROWSER_REF:' Taskfile.yml | awk '{print $2}')
           mkdir -p server/static/vendor/ena-browser
-          base="https://github.com/timrozday-mgnify/ena-browser/releases/download/${ref}"
+          base="https://github.com/EBI-Metagenomics/ena-browser/releases/download/${ref}"
           for asset in ena-browser.iife.js ena-browser.css; do
             curl -fsSL -o "server/static/vendor/ena-browser/${asset}" "${base}/${asset}"
           done
